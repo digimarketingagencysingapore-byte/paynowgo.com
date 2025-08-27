@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PayNowGo Customer Display</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💳</text></svg>">
+    <style>
+        body { 
+            overflow: hidden; 
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+        }
+        .qr-container svg {
+            width: 100% !important;
+            height: 100% !important;
+        }
+    </style>
+</head>
+<body class="bg-white min-h-screen flex items-center justify-center">
+    <div class="text-center max-w-2xl w-full p-8">
+        <!-- Loading State -->
+        <div id="loadingState" class="space-y-6">
+            <div class="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center mx-auto">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+            </div>
+            <h1 class="text-2xl font-bold text-gray-900">PayNowGo Display</h1>
+            <p class="text-gray-600">Connecting to terminal...</p>
+        </div>
+
+        <!-- Idle State -->
+        <div id="idleState" class="space-y-8 hidden">
+            <div class="space-y-4">
+                <div class="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto">
+                    <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h4"></path>
+                    </svg>
+                </div>
+                <h1 class="text-4xl font-bold text-gray-500">Ready</h1>
+                <p class="text-xl text-gray-400">Waiting for payment request...</p>
+            </div>
+            
+            <div class="space-y-2">
+                <div id="merchantName" class="text-lg font-medium text-gray-700"></div>
+                <div id="terminalName" class="text-sm text-gray-500"></div>
+                <div class="flex items-center justify-center space-x-2 text-sm text-green-600">
+                    <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span>Connected</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Payment State -->
+        <div id="paymentState" class="space-y-8 hidden">
+            <!-- QR Code -->
+            <div class="inline-block p-6 bg-white rounded-3xl shadow-2xl border-4 border-emerald-200">
+                <div id="qrContainer" class="qr-container w-80 h-80 mx-auto"></div>
+            </div>
+
+            <!-- Amount -->
+            <div class="space-y-2">
+                <div id="paymentAmount" class="text-6xl font-bold text-emerald-600"></div>
+                <div id="paymentReference" class="text-xl font-mono text-gray-700 bg-gray-100 px-4 py-2 rounded-lg inline-block"></div>
+            </div>
+
+            <!-- Timer -->
+            <div id="timerContainer" class="space-y-2">
+                <div id="timeLeft" class="text-2xl font-bold text-gray-600"></div>
+                <div class="text-sm text-gray-500">remaining</div>
+            </div>
+
+            <!-- Instructions -->
+            <div class="space-y-2">
+                <p class="text-xl font-medium text-gray-700">Scan with any Singapore banking app</p>
+                <p class="text-lg text-gray-600">DBS • OCBC • UOB • Maybank • POSB</p>
+            </div>
+        </div>
+
+        <!-- Paid State -->
+        <div id="paidState" class="space-y-8 hidden">
+            <div class="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center mx-auto">
+                <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+            </div>
+            <h1 class="text-4xl font-bold text-green-600">Payment Successful!</h1>
+            <div id="paidAmount" class="text-3xl font-bold text-gray-900"></div>
+            <p class="text-lg text-gray-600">Thank you for your payment</p>
+        </div>
+
+        <!-- Canceled State -->
+        <div id="canceledState" class="space-y-8 hidden">
+            <div class="w-24 h-24 bg-red-500 rounded-full flex items-center justify-center mx-auto">
+                <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </div>
+            <h1 class="text-4xl font-bold text-red-600">Payment Canceled</h1>
+            <p class="text-lg text-gray-600">Please try again</p>
+        </div>
+    </div>
+
+    <script>
+        // Extract merchant and terminal IDs from URL
+        const pathParts = window.location.pathname.split('/');
+        const merchantId = pathParts[2];
+        const terminalId = pathParts[3];
+        
+        console.log('[DISPLAY] Initializing for merchant:', merchantId, 'terminal:', terminalId);
+        
+        let eventSource = null;
+        let currentPaymentIntent = null;
+        let timerInterval = null;
+
+        // State management
+        function showState(stateName) {
+            const states = ['loadingState', 'idleState', 'paymentState', 'paidState', 'canceledState'];
+            states.forEach(state => {
+                document.getElementById(state).classList.add('hidden');
+            });
+            document.getElementById(stateName).classList.remove('hidden');
+        }
+
+        // Initialize display
+        async function initializeDisplay() {
+            try {
+                // Get initial terminal state
+                const response = await fetch(`/api/terminal_state?terminal_id=${terminalId}`);
+                if (!response.ok) {
+                    throw new Error('Terminal not found');
+                }
+                
+                const state = await response.json();
+                console.log('[DISPLAY] Initial state:', state);
+                
+                // Update merchant and terminal info
+                document.getElementById('merchantName').textContent = state.merchant.name;
+                document.getElementById('terminalName').textContent = `${state.terminal.name} - ${state.terminal.location}`;
+                
+                // Check if there's an active payment
+                if (state.payment_intent && state.payment_intent.status === 'pending') {
+                    showPaymentIntent(state.payment_intent);
+                } else {
+                    showState('idleState');
+                }
+                
+                // Connect to SSE stream
+                connectToStream();
+                
+            } catch (error) {
+                console.error('[DISPLAY] Initialization error:', error);
+                document.getElementById('loadingState').innerHTML = `
+                    <div class="space-y-6">
+                        <div class="w-16 h-16 bg-red-600 rounded-2xl flex items-center justify-center mx-auto">
+                            <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
+                            </svg>
+                        </div>
+                        <h1 class="text-2xl font-bold text-red-600">Connection Error</h1>
+                        <p class="text-gray-600">Terminal not found or connection failed</p>
+                        <button onclick="location.reload()" class="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-medium transition-colors">
+                            Retry Connection
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        // Connect to SSE stream
+        function connectToStream() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            console.log('[DISPLAY] Connecting to SSE stream...');
+            eventSource = new EventSource(`/api/terminal_stream/${terminalId}`);
+            
+            eventSource.onopen = () => {
+                console.log('[DISPLAY] SSE connection opened');
+            };
+            
+            eventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('[DISPLAY] SSE message received:', data);
+                    
+                    switch (data.type) {
+                        case 'connected':
+                            console.log('[DISPLAY] SSE connected');
+                            break;
+                            
+                        case 'current_state':
+                            if (data.payment_intent && data.payment_intent.status === 'pending') {
+                                showPaymentIntent(data.payment_intent);
+                            }
+                            break;
+                            
+                        case 'payment_intent_created':
+                            showPaymentIntent(data.payment_intent);
+                            break;
+                            
+                        case 'payment_completed':
+                            showPaymentCompleted(data.payment_intent);
+                            break;
+                            
+                        case 'payment_canceled':
+                            showPaymentCanceled();
+                            break;
+                    }
+                } catch (error) {
+                    console.error('[DISPLAY] Error parsing SSE message:', error);
+                }
+            };
+            
+            eventSource.onerror = (error) => {
+                console.error('[DISPLAY] SSE error:', error);
+                // Reconnect after 5 seconds
+                setTimeout(() => {
+                    if (eventSource.readyState === EventSource.CLOSED) {
+                        connectToStream();
+                    }
+                }, 5000);
+            };
+        }
+
+        // Show payment intent
+        function showPaymentIntent(paymentIntent) {
+            console.log('[DISPLAY] Showing payment intent:', paymentIntent);
+            currentPaymentIntent = paymentIntent;
+            
+            // Update QR code
+            document.getElementById('qrContainer').innerHTML = paymentIntent.qrSvg;
+            
+            // Update amount and reference
+            document.getElementById('paymentAmount').textContent = `SGD ${paymentIntent.amount.toFixed(2)}`;
+            document.getElementById('paymentReference').textContent = paymentIntent.reference;
+            
+            // Start timer
+            startTimer(paymentIntent.expires_at);
+            
+            showState('paymentState');
+        }
+
+        // Show payment completed
+        function showPaymentCompleted(paymentIntent) {
+            console.log('[DISPLAY] Payment completed:', paymentIntent);
+            
+            document.getElementById('paidAmount').textContent = `SGD ${paymentIntent.amount.toFixed(2)}`;
+            showState('paidState');
+            
+            // Clear timer
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            
+            // Return to idle after 5 seconds
+            setTimeout(() => {
+                showState('idleState');
+            }, 5000);
+        }
+
+        // Show payment canceled
+        function showPaymentCanceled() {
+            console.log('[DISPLAY] Payment canceled');
+            
+            showState('canceledState');
+            
+            // Clear timer
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            
+            // Return to idle after 3 seconds
+            setTimeout(() => {
+                showState('idleState');
+            }, 3000);
+        }
+
+        // Start countdown timer
+        function startTimer(expiresAt) {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+            
+            timerInterval = setInterval(() => {
+                const now = new Date().getTime();
+                const expiry = new Date(expiresAt).getTime();
+                const diff = Math.max(0, expiry - now);
+                const seconds = Math.floor(diff / 1000);
+                
+                if (seconds <= 0) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                    showState('idleState');
+                    return;
+                }
+                
+                const mins = Math.floor(seconds / 60);
+                const secs = seconds % 60;
+                const timeString = `${mins}:${secs.toString().padStart(2, '0')}`;
+                
+                const timeLeftElement = document.getElementById('timeLeft');
+                if (timeLeftElement) {
+                    timeLeftElement.textContent = timeString;
+                    
+                    // Change color when time is running out
+                    if (seconds < 60) {
+                        timeLeftElement.className = 'text-2xl font-bold text-red-600';
+                    } else {
+                        timeLeftElement.className = 'text-2xl font-bold text-gray-600';
+                    }
+                }
+            }, 1000);
+        }
+
+        // Handle page visibility changes
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                console.log('[DISPLAY] Page became visible, reconnecting...');
+                connectToStream();
+            }
+        });
+
+        // Handle network changes
+        window.addEventListener('online', () => {
+            console.log('[DISPLAY] Network back online, reconnecting...');
+            connectToStream();
+        });
+
+        // Initialize display
+        initializeDisplay();
+    </script>
+</body>
+</html>

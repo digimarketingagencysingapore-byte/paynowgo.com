@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PayNowGo Staff Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💳</text></svg>">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <div class="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+            </div>
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">Staff Demo</h1>
+            <p class="text-gray-600">Create PayNow QR codes for customer payments</p>
+        </div>
+
+        <div class="max-w-2xl mx-auto">
+            <!-- Payment Form -->
+            <div class="bg-white p-8 rounded-xl shadow-lg border border-gray-100 mb-8">
+                <h2 class="text-xl font-bold text-gray-900 mb-6">Create Payment QR Code</h2>
+                
+                <form id="paymentForm" class="space-y-6">
+                    <!-- Merchant Selection -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Merchant</label>
+                        <select id="merchantSelect" required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Select merchant...</option>
+                        </select>
+                    </div>
+
+                    <!-- Terminal Selection -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Terminal</label>
+                        <select id="terminalSelect" required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Select terminal...</option>
+                        </select>
+                    </div>
+
+                    <!-- Amount -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Amount (SGD)</label>
+                        <input type="number" id="amount" step="0.01" min="0.01" required 
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xl font-bold text-center"
+                               placeholder="0.00">
+                        
+                        <!-- Preset amounts -->
+                        <div class="mt-4 flex flex-wrap gap-2">
+                            <span class="text-sm text-gray-600 mr-2">Quick amounts:</span>
+                            <button type="button" onclick="setAmount(5)" class="px-3 py-1 text-sm bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-full transition-colors">S$5</button>
+                            <button type="button" onclick="setAmount(10)" class="px-3 py-1 text-sm bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-full transition-colors">S$10</button>
+                            <button type="button" onclick="setAmount(25)" class="px-3 py-1 text-sm bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-full transition-colors">S$25</button>
+                            <button type="button" onclick="setAmount(50)" class="px-3 py-1 text-sm bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-full transition-colors">S$50</button>
+                            <button type="button" onclick="setAmount(100)" class="px-3 py-1 text-sm bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-full transition-colors">S$100</button>
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button type="submit" id="submitBtn" 
+                            class="w-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-4 rounded-lg font-semibold text-lg flex items-center justify-center space-x-2 transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h4"></path>
+                        </svg>
+                        <span>Generate QR Code</span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Status Display -->
+            <div id="statusDisplay" class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 hidden">
+                <h3 class="text-lg font-bold text-gray-900 mb-4">Payment Created</h3>
+                <div id="statusContent"></div>
+            </div>
+
+            <!-- Display Links -->
+            <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-6">
+                <h3 class="text-lg font-bold text-emerald-900 mb-4">Customer Display Links</h3>
+                <p class="text-sm text-emerald-700 mb-4">Open these links on customer-facing screens:</p>
+                <div id="displayLinks" class="space-y-2">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let merchants = [];
+        let terminals = [];
+
+        // Load merchants on page load
+        async function loadMerchants() {
+            try {
+                const response = await fetch('/api/merchants');
+                merchants = await response.json();
+                
+                const select = document.getElementById('merchantSelect');
+                select.innerHTML = '<option value="">Select merchant...</option>';
+                
+                merchants.forEach(merchant => {
+                    const option = document.createElement('option');
+                    option.value = merchant.merchant_id;
+                    option.textContent = merchant.name;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading merchants:', error);
+            }
+        }
+
+        // Load terminals when merchant changes
+        async function loadTerminals(merchantId) {
+            try {
+                const response = await fetch(`/api/merchants/${merchantId}/terminals`);
+                terminals = await response.json();
+                
+                const select = document.getElementById('terminalSelect');
+                select.innerHTML = '<option value="">Select terminal...</option>';
+                
+                terminals.forEach(terminal => {
+                    const option = document.createElement('option');
+                    option.value = terminal.terminal_id;
+                    option.textContent = `${terminal.name} (${terminal.location})`;
+                    select.appendChild(option);
+                });
+
+                // Update display links
+                updateDisplayLinks(merchantId, terminals);
+            } catch (error) {
+                console.error('Error loading terminals:', error);
+            }
+        }
+
+        // Update display links
+        function updateDisplayLinks(merchantId, terminals) {
+            const container = document.getElementById('displayLinks');
+            container.innerHTML = '';
+            
+            terminals.forEach(terminal => {
+                const link = document.createElement('a');
+                link.href = `/display/${merchantId}/${terminal.terminal_id}`;
+                link.target = '_blank';
+                link.className = 'block w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium text-center transition-colors text-sm';
+                link.textContent = `${terminal.name} - ${terminal.location}`;
+                container.appendChild(link);
+            });
+        }
+
+        // Set preset amount
+        function setAmount(amount) {
+            document.getElementById('amount').value = amount;
+        }
+
+        // Handle form submission
+        document.getElementById('paymentForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const merchantId = document.getElementById('merchantSelect').value;
+            const terminalId = document.getElementById('terminalSelect').value;
+            const amount = document.getElementById('amount').value;
+            
+            if (!merchantId || !terminalId || !amount) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = `
+                <svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Creating QR...</span>
+            `;
+            
+            try {
+                const response = await fetch('/api/payment_intents', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        merchant_id: merchantId,
+                        terminal_id: terminalId,
+                        amount: parseFloat(amount),
+                        currency: 'SGD'
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to create payment');
+                }
+                
+                const paymentIntent = await response.json();
+                
+                // Show success status
+                showPaymentStatus(paymentIntent, merchantId, terminalId);
+                
+                // Reset form
+                document.getElementById('amount').value = '';
+                
+            } catch (error) {
+                console.error('Error creating payment:', error);
+                alert('Error: ' + error.message);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h4"></path>
+                    </svg>
+                    <span>Generate QR Code</span>
+                `;
+            }
+        });
+
+        // Show payment status
+        function showPaymentStatus(paymentIntent, merchantId, terminalId) {
+            const merchant = merchants.find(m => m.merchant_id === merchantId);
+            const terminal = terminals.find(t => t.terminal_id === terminalId);
+            
+            const statusDisplay = document.getElementById('statusDisplay');
+            const statusContent = document.getElementById('statusContent');
+            
+            statusContent.innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                                <span class="text-gray-600">Amount:</span>
+                                <div class="font-bold text-lg text-blue-600">SGD ${paymentIntent.amount.toFixed(2)}</div>
+                            </div>
+                            <div>
+                                <span class="text-gray-600">Reference:</span>
+                                <div class="font-mono font-medium">${paymentIntent.reference}</div>
+                            </div>
+                            <div>
+                                <span class="text-gray-600">Terminal:</span>
+                                <div class="font-medium">${terminal.name}</div>
+                            </div>
+                            <div>
+                                <span class="text-gray-600">Status:</span>
+                                <div class="font-medium text-orange-600">Pending</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="text-center">
+                        <a href="/display/${merchantId}/${terminalId}" target="_blank" 
+                           class="inline-flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-lg font-medium transition-colors">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                            </svg>
+                            <span>View on Customer Display</span>
+                        </a>
+                    </div>
+                    
+                    <div class="flex space-x-3">
+                        <button onclick="markAsPaid('${paymentIntent.id}')" 
+                                class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">
+                            ✅ Mark as Paid
+                        </button>
+                        <button onclick="cancelPayment('${paymentIntent.id}')" 
+                                class="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">
+                            ❌ Cancel
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            statusDisplay.classList.remove('hidden');
+        }
+
+        // Mark payment as paid
+        async function markAsPaid(paymentId) {
+            try {
+                const response = await fetch(`/api/payment_intents/${paymentId}/paid`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    alert('✅ Payment marked as paid!');
+                    document.getElementById('statusDisplay').classList.add('hidden');
+                } else {
+                    throw new Error('Failed to mark as paid');
+                }
+            } catch (error) {
+                console.error('Error marking as paid:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Cancel payment
+        async function cancelPayment(paymentId) {
+            try {
+                const response = await fetch(`/api/payment_intents/${paymentId}/cancel`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    alert('❌ Payment canceled');
+                    document.getElementById('statusDisplay').classList.add('hidden');
+                } else {
+                    throw new Error('Failed to cancel payment');
+                }
+            } catch (error) {
+                console.error('Error canceling payment:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Event listeners
+        document.getElementById('merchantSelect').addEventListener('change', (e) => {
+            const merchantId = e.target.value;
+            if (merchantId) {
+                loadTerminals(merchantId);
+            } else {
+                document.getElementById('terminalSelect').innerHTML = '<option value="">Select terminal...</option>';
+                document.getElementById('displayLinks').innerHTML = '';
+            }
+        });
+
+        // Initialize page
+        loadMerchants();
+    </script>
+</body>
+</html>

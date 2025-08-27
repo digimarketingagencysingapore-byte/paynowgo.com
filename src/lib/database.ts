@@ -1,0 +1,507 @@
+// /src/lib/database.ts
+import { getSupabaseClient, getTenantContext, isSupabaseConfigured } from './supabase.js';
+
+// Define interfaces that were missing
+export interface StoredCategory {
+  id: string;
+  tenantId: string;
+  name: string;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoredItem {
+  id: string;
+  tenantId: string;
+  categoryId: string | null;
+  name: string;
+  price_cents: number;
+  active: boolean;
+  sku: string | null;
+  createdAt: string;
+  updatedAt: string;
+  category?: StoredCategory;
+}
+
+// Storage keys for localStorage fallback
+const STORAGE_KEYS = {
+  ITEMS: 'paynowgo_items',
+  CATEGORIES: 'paynowgo_categories',
+  ORDERS: 'paynowgo_orders'
+};
+
+// Storage utilities
+function getFromStorage<T>(key: string, defaultValue: T): T {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : defaultValue;
+  } catch (error) {
+    console.error(`Error reading from localStorage (${key}):`, error);
+    return defaultValue;
+  }
+}
+
+function saveToStorage<T>(key: string, data: T): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (error) {
+    console.error(`Error saving to localStorage (${key}):`, error);
+  }
+}
+
+// LocalStorage helper functions for categories
+function createCategoryInLocalStorage(data: { name: string; position?: number }): StoredCategory {
+  const categories = getFromStorage(STORAGE_KEYS.CATEGORIES, []);
+  const newCategory: StoredCategory = {
+    id: 'cat-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+    tenantId: '00000000-0000-0000-0000-000000000001',
+    name: data.name,
+    position: data.position || 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  
+  const updatedCategories = [newCategory, ...categories];
+  saveToStorage(STORAGE_KEYS.CATEGORIES, updatedCategories);
+  return newCategory;
+}
+
+function updateCategoryInLocalStorage(id: string, data: Partial<{ name: string; position: number }>): StoredCategory | null {
+  const categories = getFromStorage(STORAGE_KEYS.CATEGORIES, []);
+  const index = categories.findIndex(cat => cat.id === id);
+  
+  if (index === -1) return null;
+
+  const updatedCategory = {
+    ...categories[index],
+    ...data,
+    updatedAt: new Date().toISOString()
+  };
+
+  categories[index] = updatedCategory;
+  saveToStorage(STORAGE_KEYS.CATEGORIES, categories);
+  return updatedCategory;
+}
+
+function deleteCategoryFromLocalStorage(id: string): boolean {
+  const categories = getFromStorage(STORAGE_KEYS.CATEGORIES, []);
+  const filteredCategories = categories.filter(cat => cat.id !== id);
+  
+  if (filteredCategories.length === categories.length) return false;
+  
+  saveToStorage(STORAGE_KEYS.CATEGORIES, filteredCategories);
+  return true;
+}
+
+// LocalStorage helper functions for items
+function getItemsFromLocalStorage(filters?: { 
+  active?: boolean; 
+  categoryId?: string; 
+  query?: string; 
+}): StoredItem[] {
+  let items = getFromStorage(STORAGE_KEYS.ITEMS, []);
+  
+  if (filters?.active !== undefined) {
+    items = items.filter(item => item.active === filters.active);
+  }
+  if (filters?.categoryId) {
+    items = items.filter(item => item.categoryId === filters.categoryId);
+  }
+  if (filters?.query) {
+    const searchQuery = filters.query.toLowerCase();
+    items = items.filter(item => 
+      item.name.toLowerCase().includes(searchQuery) ||
+      (item.sku && item.sku.toLowerCase().includes(searchQuery))
+    );
+  }
+  
+  return items;
+}
+
+function createItemInLocalStorage(data: {
+  name: string;
+  price: string;
+  categoryId?: string | null;
+  active?: boolean;
+  sku?: string | null;
+}): StoredItem {
+  const items = getFromStorage(STORAGE_KEYS.ITEMS, []);
+  const newItem: StoredItem = {
+    id: 'item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+    tenantId: '00000000-0000-0000-0000-000000000001',
+    categoryId: data.categoryId || null,
+    name: data.name,
+    price_cents: Math.round(parseFloat(data.price) * 100),
+    active: data.active ?? true,
+    sku: data.sku || null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  
+  const updatedItems = [newItem, ...items];
+  saveToStorage(STORAGE_KEYS.ITEMS, updatedItems);
+  return newItem;
+}
+
+function updateItemInLocalStorage(id: string, data: Partial<{
+  name: string;
+  price: string;
+  categoryId: string | null;
+  active: boolean;
+  sku: string | null;
+}>): StoredItem | null {
+  const items = getFromStorage(STORAGE_KEYS.ITEMS, []);
+  const index = items.findIndex(item => item.id === id);
+  
+  if (index === -1) return null;
+
+  const updateData: any = { ...items[index] };
+  if (data.name !== undefined) updateData.name = data.name;
+  if (data.price !== undefined) updateData.price_cents = Math.round(parseFloat(data.price) * 100);
+  if (data.categoryId !== undefined) updateData.categoryId = data.categoryId;
+  if (data.active !== undefined) updateData.active = data.active;
+  if (data.sku !== undefined) updateData.sku = data.sku;
+  updateData.updatedAt = new Date().toISOString();
+
+  items[index] = updateData;
+  saveToStorage(STORAGE_KEYS.ITEMS, items);
+  return updateData;
+}
+
+function deleteItemFromLocalStorage(id: string): boolean {
+  const items = getFromStorage(STORAGE_KEYS.ITEMS, []);
+  const filteredItems = items.filter(item => item.id !== id);
+  
+  if (filteredItems.length === items.length) return false;
+  
+  saveToStorage(STORAGE_KEYS.ITEMS, filteredItems);
+  return true;
+}
+
+/**
+ * Ensures tables are accessible via public schema
+ * Handles both direct table access and view-based access
+ */
+export async function ensureTablesReady(): Promise<void> {
+  const supabase = getSupabaseClient();
+  
+  try {
+    // Test table access
+    const { error } = await supabase
+      .from('items')
+      .select('id')
+      .limit(1);
+
+    if (error) {
+      console.error('[database] Table access failed:', error);
+      
+      if (error.code === 'PGRST106') {
+        throw new Error('Tables not found. Please run the database migration.');
+      }
+      
+      if (error.code === 'PGRST205') {
+        // Schema cache issue - wait and retry once
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        
+        const { error: retryError } = await supabase
+          .from('items')
+          .select('id')
+          .limit(1);
+          
+        if (retryError) {
+          throw new Error(`Schema cache error: ${retryError.message}`);
+        }
+      } else {
+        throw new Error(`Database access failed: ${error.message}`);
+      }
+    }
+
+    console.log('[database] Tables ready');
+  } catch (error) {
+    console.error('[database] Tables not ready:', error);
+    throw error;
+  }
+}
+
+export const CategoriesAPI = {
+  async getAll(): Promise<StoredCategory[]> {
+    if (isSupabaseConfigured()) {
+      try {
+        console.log('[CATEGORIES_API] Fetching from Supabase...');
+        const supabase = getSupabaseClient();
+        const { data, error } = await supabase
+          .from('categories')
+          .select('*')
+          .order('created_at', { ascending: false });
+        
+        if (error) throw error;
+        return data || [];
+      } catch (error) {
+        console.warn('[CATEGORIES_API] Supabase error, using localStorage:', error);
+        return this.getFromLocalStorage();
+      }
+    }
+    return this.getFromLocalStorage();
+  },
+
+  async create(data: { name: string; position?: number }): Promise<StoredCategory> {
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabaseClient();
+        const insertData = {
+          name: data.name,
+          position: data.position || 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        
+        const { data: result, error } = await supabase
+          .from('categories')
+          .insert(insertData)
+          .select()
+          .single();
+        
+        if (error) throw error;
+        return result;
+      } catch (error) {
+        console.warn('[CATEGORIES_API] Supabase create failed, using localStorage:', error);
+        return createCategoryInLocalStorage(data);
+      }
+    }
+    return createCategoryInLocalStorage(data);
+  },
+
+  async update(id: string, data: Partial<{ name: string; position: number }>): Promise<StoredCategory | null> {
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabaseClient();
+        const updateData = {
+          ...data,
+          updated_at: new Date().toISOString()
+        };
+        
+        const { data: result, error } = await supabase
+          .from('categories')
+          .update(updateData)
+          .eq('id', id)
+          .select()
+          .single();
+        
+        if (error) throw error;
+        return result;
+      } catch (error) {
+        console.warn('[CATEGORIES_API] Supabase update failed, using localStorage:', error);
+        return updateCategoryInLocalStorage(id, data);
+      }
+    }
+    return updateCategoryInLocalStorage(id, data);
+  },
+
+  async delete(id: string): Promise<boolean> {
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabaseClient();
+        const { error } = await supabase
+          .from('categories')
+          .delete()
+          .eq('id', id);
+        
+        if (error) throw error;
+        return true;
+      } catch (error) {
+        console.warn('[CATEGORIES_API] Supabase delete failed, using localStorage:', error);
+        return deleteCategoryFromLocalStorage(id);
+      }
+    }
+    return deleteCategoryFromLocalStorage(id);
+  }
+};
+
+export const ItemsAPI = {
+  async getAll(filters?: { 
+    active?: boolean; 
+    categoryId?: string; 
+    query?: string; 
+  }): Promise<StoredItem[]> {
+    try {
+      console.log('[ITEMS_API] Fetching from Supabase...');
+      const supabase = getSupabaseClient();
+      let query = supabase
+        .from('items')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      // Apply filters
+      if (filters?.active !== undefined) {
+        query = query.eq('active', filters.active);
+      }
+      
+      const { data, error } = await query;
+      if (error) {
+        console.error('[ITEMS_API] Supabase query failed:', error);
+        throw error;
+      }
+      
+      let items = data || [];
+      
+      // Apply text search filter client-side
+      if (filters?.query) {
+        const searchQuery = filters.query.toLowerCase();
+        items = items.filter(item => 
+          item.name.toLowerCase().includes(searchQuery) ||
+          (item.sku && item.sku.toLowerCase().includes(searchQuery))
+        );
+      }
+      
+      // Convert to StoredItem format
+      return items.map(item => ({
+        id: item.id,
+        tenantId: item.tenant_id,
+        categoryId: null, // No category support in current schema
+        name: item.name,
+        price_cents: item.price_cents,
+        active: item.active,
+        sku: item.sku,
+        createdAt: item.created_at,
+        updatedAt: item.updated_at,
+        category: null
+      }));
+    } catch (error) {
+      console.warn('[ITEMS_API] Supabase error, using localStorage:', error);
+      return getItemsFromLocalStorage(filters);
+    }
+  },
+
+  async create(data: {
+    name: string;
+    price: string;
+    categoryId?: string | null;
+    active?: boolean;
+    sku?: string | null;
+  }): Promise<StoredItem> {
+    try {
+      const priceInCents = Math.round(parseFloat(data.price) * 100);
+      const supabase = getSupabaseClient();
+      const insertData = {
+        tenant_id: '00000000-0000-0000-0000-000000000001',
+        name: data.name,
+        price_cents: priceInCents,
+        currency: 'SGD',
+        active: data.active ?? true,
+        sku: data.sku,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
+      console.log('[ITEMS_API] Creating item in Supabase:', insertData);
+      
+      const { data: result, error } = await supabase
+        .from('items')
+        .insert(insertData)
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('[ITEMS_API] Supabase insert failed:', error);
+        throw error;
+      }
+      
+      console.log('[ITEMS_API] Item created successfully:', result);
+      
+      // Convert to StoredItem format
+      return {
+        id: result.id,
+        tenantId: result.tenant_id,
+        categoryId: null,
+        name: result.name,
+        price_cents: result.price_cents,
+        active: result.active,
+        sku: result.sku,
+        createdAt: result.created_at,
+        updatedAt: result.updated_at,
+        category: null
+      };
+    } catch (error) {
+      console.warn('[ITEMS_API] Supabase create failed, using localStorage:', error);
+      return createItemInLocalStorage(data);
+    }
+  },
+
+  async update(id: string, data: Partial<{
+    name: string;
+    price: string;
+    categoryId: string | null;
+    active: boolean;
+    sku: string | null;
+  }>): Promise<StoredItem | null> {
+    try {
+      const supabase = getSupabaseClient();
+      const updateData: any = {
+        updated_at: new Date().toISOString()
+      };
+      
+      if (data.name !== undefined) updateData.name = data.name;
+      if (data.price !== undefined) updateData.price_cents = Math.round(parseFloat(data.price) * 100);
+      if (data.active !== undefined) updateData.active = data.active;
+      if (data.sku !== undefined) updateData.sku = data.sku;
+      updateData.currency = 'SGD';
+      
+      console.log('[ITEMS_API] Updating item in Supabase:', id, updateData);
+      
+      const { data: result, error } = await supabase
+        .from('items')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('[ITEMS_API] Supabase update failed:', error);
+        throw error;
+      }
+      
+      console.log('[ITEMS_API] Item updated successfully:', result);
+      
+      // Convert to StoredItem format
+      return {
+        id: result.id,
+        tenantId: result.tenant_id,
+        categoryId: null,
+        name: result.name,
+        price_cents: result.price_cents,
+        active: result.active,
+        sku: result.sku,
+        createdAt: result.created_at,
+        updatedAt: result.updated_at,
+        category: null
+      };
+    } catch (error) {
+      console.warn('[ITEMS_API] Supabase update failed, using localStorage:', error);
+      return updateItemInLocalStorage(id, data);
+    }
+  },
+
+  async delete(id: string): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      console.log('[ITEMS_API] Deleting item from Supabase:', id);
+      
+      const { error } = await supabase
+        .from('items')
+        .delete()
+        .eq('id', id);
+      
+      if (error) {
+        console.error('[ITEMS_API] Supabase delete failed:', error);
+        throw error;
+      }
+      
+      console.log('[ITEMS_API] Item deleted successfully');
+      return true;
+    } catch (error) {
+      console.warn('[ITEMS_API] Supabase delete failed, using localStorage:', error);
+      return deleteItemFromLocalStorage(id);
+    }
+  }
+};
