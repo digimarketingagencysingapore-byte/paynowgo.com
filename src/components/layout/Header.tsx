@@ -1,5 +1,6 @@
 import React from 'react';
 import { Menu, Bell, User, LogOut } from 'lucide-react';
+import { useSettingsContext } from '../../contexts/SettingsContext';
 import type { Page } from '../../App';
 
 interface HeaderProps {
@@ -18,46 +19,17 @@ const pageLabels = {
 };
 
 export function Header({ onMenuClick, currentPage, onLogout }: HeaderProps) {
-  const [merchantData, setMerchantData] = React.useState<any>(null);
-
-  // Load merchant data and listen for updates
-  React.useEffect(() => {
-    const loadMerchantData = () => {
-      const userData = localStorage.getItem('user_data');
-      if (userData) {
-        try {
-          const merchant = JSON.parse(userData);
-          console.log('[HEADER] Loading merchant data:', {
-            id: merchant.id,
-            businessName: merchant.businessName,
-            uen: merchant.uen,
-            mobile: merchant.mobile
-          });
-          setMerchantData(merchant);
-        } catch (error) {
-          console.error('[HEADER] Error parsing merchant data:', error);
-          setMerchantData(null);
-        }
-      } else {
-        setMerchantData(null);
-      }
-    };
-
-    // Load initial data
-    loadMerchantData();
-
-    // Listen for merchant data updates
-    const handleMerchantUpdate = (event: CustomEvent) => {
-      console.log('[HEADER] Merchant data updated via event:', event.detail);
-      setMerchantData(event.detail);
-    };
-
-    window.addEventListener('merchantDataUpdated', handleMerchantUpdate as EventListener);
-
-    return () => {
-      window.removeEventListener('merchantDataUpdated', handleMerchantUpdate as EventListener);
-    };
-  }, []);
+  // Get merchant data directly from SettingsContext (real-time updates)
+  const { currentMerchant, businessName } = useSettingsContext();
+  
+  // Use currentMerchant data instead of localStorage
+  const merchantData = currentMerchant;
+  
+  console.log('[HEADER] Using merchant data from SettingsContext:', {
+    hasMerchant: !!merchantData,
+    businessName: businessName || '(no name)',
+    id: merchantData?.id || '(no id)'
+  });
 
   return (
     <header className="bg-white border-b border-gray-200 px-6 py-4">

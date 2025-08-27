@@ -87,11 +87,24 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         subscriptionLink: merchant.subscription_link
       };
       
-      console.log('[SETTINGS_CONTEXT] Merchant data loaded from database:', merchantData.businessName);
+      console.log('[SETTINGS_CONTEXT] Merchant data loaded from database:', {
+        businessName: merchantData.businessName,
+        uen: merchantData.uen,
+        mobile: merchantData.mobile,
+        address: merchantData.address,
+        id: merchantData.id
+      });
       setCurrentMerchant(merchantData);
       
-      // Also update localStorage for backward compatibility
-      localStorage.setItem('merchant_data', JSON.stringify(merchantData));
+      // Set initial business type selection based on available payment methods
+      // Prefer UEN if available, fallback to mobile
+      if (merchantData.uen && merchantData.uen.trim()) {
+        setSelectedBusinessType('uen');
+      } else if (merchantData.mobile && merchantData.mobile.trim()) {
+        setSelectedBusinessType('mobile');
+      }
+      
+      // Merchant data now stored exclusively in Supabase
       
     } catch (error) {
       console.error('[SETTINGS_CONTEXT] Error loading merchant from session:', error);
@@ -99,12 +112,24 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   };
   
+  // User selection state for business type (independent of merchant data)
+  const [selectedBusinessType, setSelectedBusinessType] = useState<'mobile' | 'uen'>('uen');
+  
   // Derive settings from current merchant or use defaults
-  const businessType = currentMerchant?.uen ? 'uen' : 'mobile';
+  const businessType = selectedBusinessType; // Use user selection instead of auto-deriving
   const uen = currentMerchant?.uen || '';
   const mobile = currentMerchant?.mobile ? currentMerchant.mobile.replace(/^\+65/, '') : '';
   const businessName = currentMerchant?.businessName || '';
   const address = currentMerchant?.address || '';
+  
+  // Debug logging for PayNow values
+  console.log('[SETTINGS_CONTEXT] Current PayNow values:', {
+    businessType,
+    uen: uen || '(empty)',
+    mobile: mobile || '(empty)', 
+    rawMobile: currentMerchant?.mobile || '(null)',
+    hasCurrentMerchant: !!currentMerchant
+  });
   
   const updateMerchantInDatabase = async (updates: any) => {
     if (!currentMerchant) return;
@@ -136,23 +161,21 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       
       console.log('[SETTINGS_CONTEXT] Merchant updated in database successfully');
       
-      // Update local state and localStorage
+      // Update local state
       const updatedMerchant = { ...currentMerchant, ...updates };
       setCurrentMerchant(updatedMerchant);
-      localStorage.setItem('merchant_data', JSON.stringify(updatedMerchant));
       
     } catch (error) {
       console.error('[SETTINGS_CONTEXT] Error updating merchant:', error);
-      // Still update local state for better UX
+      // Still update local state for better UX, but don't persist to localStorage
       const updatedMerchant = { ...currentMerchant, ...updates };
       setCurrentMerchant(updatedMerchant);
-      localStorage.setItem('merchant_data', JSON.stringify(updatedMerchant));
     }
   };
 
   const setBusinessType = (type: 'mobile' | 'uen') => {
-    // This is just for UI selection, doesn't need to update database
     console.log('[SETTINGS_CONTEXT] Business type preference set to:', type);
+    setSelectedBusinessType(type);
   };
   
   const setUEN = async (newUen: string) => {

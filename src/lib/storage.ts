@@ -4,7 +4,7 @@
  */
 
 import { CategoriesAPI as SupabaseCategoriesAPI, ItemsAPI as SupabaseItemsAPI, type StoredCategory, type StoredItem } from './database';
-import { isSupabaseConfigured } from './supabase.js';
+import { isSupabaseConfigured, supabase } from './supabase.js';
 
 // Re-export types from database module
 export type { StoredItem, StoredCategory };
@@ -175,22 +175,37 @@ function initializeStorage(merchantId?: string) {
   }
 }
 
-// Get current merchant ID from localStorage
-function getCurrentMerchantId(): string {
+// Get current merchant ID from Supabase session
+async function getCurrentMerchantId(): Promise<string> {
   try {
-    const userData = localStorage.getItem('user_data');
-    if (userData) {
-      const merchant = JSON.parse(userData);
-      console.log('[STORAGE] Current merchant ID from user_data:', merchant.id, 'Email:', merchant.email);
-      return merchant.id;
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !user) {
+      console.log('[STORAGE] No authenticated user found');
+      throw new Error('User not authenticated');
     }
+    
+    // Get merchant data linked to this user's profile
+    const { data: merchant, error: merchantError } = await supabase
+      .from('merchants')
+      .select('id')
+      .eq('profile_id', user.id)
+      .single();
+      
+    if (merchantError || !merchant) {
+      console.warn('[STORAGE] No merchant found for user:', merchantError);
+      throw new Error('No merchant found for authenticated user');
+    }
+    
+    console.log('[STORAGE] Current merchant ID from Supabase:', merchant.id, 'User:', user.email);
+    return merchant.id;
   } catch (error) {
-    console.error('Error getting current merchant ID:', error);
+    console.error('[STORAGE] Error getting current merchant ID:', error);
+    
+    // Fallback to demo merchant ID
+    console.log('[STORAGE] Using fallback merchant ID');
+    return '00000000-0000-0000-0000-000000000001';
   }
-  
-  // Fallback to demo merchant ID
-  console.log('[STORAGE] Using fallback merchant ID');
-  return '00000000-0000-0000-0000-000000000001';
 }
 
 // Get merchant-specific storage keys
@@ -373,7 +388,13 @@ export const DisplayAPI = {
 
 // Initialize storage on module load
 if (typeof window !== 'undefined') {
-  const merchantId = getCurrentMerchantId();
-  console.log('[STORAGE] Initializing storage for merchant:', merchantId);
-  initializeStorage(merchantId);
+  // Initialize storage asynchronously
+  getCurrentMerchantId().then(merchantId => {
+    console.log('[STORAGE] Initializing storage for merchant:', merchantId);
+    initializeStorage(merchantId);
+  }).catch(error => {
+    console.warn('[STORAGE] Could not get merchant ID for initialization:', error);
+    // Initialize with fallback ID
+    initializeStorage('00000000-0000-0000-0000-000000000001');
+  });
 }

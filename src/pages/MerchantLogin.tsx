@@ -111,9 +111,8 @@ export function MerchantLogin({ onLoginSuccess }: MerchantLoginProps) {
         session: authData.session
       };
 
-      // Store login data
-      localStorage.setItem('merchant_data', JSON.stringify(loginData.user));
-      localStorage.setItem('user_type', 'merchant');
+      // Authentication now handled entirely by Supabase session
+      // No localStorage needed - SettingsContext loads merchant data from session
       
       console.log('[MERCHANT_LOGIN] ✅ Login successful for:', merchant.business_name);
       console.log('[MERCHANT_LOGIN] Session data stored, calling onLoginSuccess');
