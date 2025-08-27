@@ -106,16 +106,29 @@ export function POSSystem() {
         company: 'PayNowGo Demo'
       };
       
-      console.log('[POS] Generating QR with options:', payNowOptions);
+      console.log('[POS] ===== QR GENERATION START =====');
+      console.log('[POS] Business type selected:', businessType);
+      console.log('[POS] Available values - UEN:', uen, 'Mobile:', mobile);
+      console.log('[POS] Final PayNow options:', payNowOptions);
+      
       const { generatePayNowQrCode } = await import('../../utils/paynowQrGenerator');
       const qrResult = await generatePayNowQrCode(payNowOptions);
-      console.log('[POS] QR generated successfully. SVG length:', qrResult.qrCodeSvg?.length);
+      
+      console.log('[POS] ===== QR GENERATION SUCCESS =====');
+      console.log('[POS] QR result received:', {
+        hasQrCodeSvg: !!qrResult.qrCodeSvg,
+        svgLength: qrResult.qrCodeSvg?.length,
+        hasQrCodePng: !!qrResult.qrCodePng,
+        qrText: qrResult.qrText
+      });
       
       // Set the QR result
+      console.log('[POS] Setting currentQR state...');
       setCurrentQR(qrResult);
+      console.log('[POS] currentQR state set successfully');
       
       // Create order in database
-      console.log('[POS] Creating order in database...');
+      console.log('[POS] ===== DATABASE CREATION START =====');
       const orderData: CreateOrderData = {
         reference: finalReference,
         amount: parseFloat(amount),
@@ -130,9 +143,27 @@ export function POSSystem() {
         }))
       };
       
+      console.log('[POS] Order data to create:', {
+        reference: orderData.reference,
+        amount: orderData.amount,
+        description: orderData.description,
+        hasQrSvg: !!orderData.qrSvg,
+        itemsCount: orderData.items?.length || 0
+      });
+      
+      console.log('[POS] Calling MerchantOrdersDB.create...');
       const newOrder = await MerchantOrdersDB.create(orderData);
+      
+      console.log('[POS] ===== DATABASE CREATION SUCCESS =====');
+      console.log('[POS] New order created:', {
+        id: newOrder.id,
+        reference: newOrder.reference,
+        amount: newOrder.amount,
+        status: newOrder.status,
+        tenant_id: newOrder.tenant_id
+      });
+      
       setCurrentOrderId(newOrder.id);
-      console.log('[POS] Order created with ID:', newOrder.id);
 
       // Send QR data to all displays
       console.log('[POS] Sending QR to display system...');
@@ -165,9 +196,15 @@ export function POSSystem() {
       
       console.log('[POS] QR generation completed successfully');
     } catch (error) {
-      console.error('[POS] QR generation failed:', error);
+      console.error('[POS] ===== ERROR OCCURRED =====');
+      console.error('[POS] Error type:', error?.constructor?.name);
+      console.error('[POS] Error message:', error instanceof Error ? error.message : String(error));
+      console.error('[POS] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+      console.error('[POS] Full error object:', error);
+      
       alert(`QR Generation Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setCurrentQR(null);
+      setCurrentOrderId(null);
     }
     
     console.log('[POS] ===== End Generate QR Button Click =====');
@@ -405,49 +442,63 @@ export function POSSystem() {
                 
                 {/* Show available payment methods */}
                 <div className="space-y-3">
-                  {uen && (
-                    <label className="flex items-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50">
-                      <input
-                        type="radio"
-                        value="uen"
-                        checked={businessType === 'uen'}
-                        onChange={(e) => setBusinessType(e.target.value as 'mobile' | 'uen')}
-                        className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 border-gray-300"
-                      />
-                      <div className="ml-3">
-                        <div className="text-sm font-medium text-gray-900">Business PayNow</div>
-                        <div className="text-xs text-gray-500">UEN: {uen}</div>
+                  {/* Business PayNow Option - Always show */}
+                  <label className={`flex items-center p-3 border rounded-lg ${
+                    uen ? 'border-gray-200 hover:bg-gray-50' : 'border-orange-200 bg-orange-50'
+                  }`}>
+                    <input
+                      type="radio"
+                      value="uen"
+                      checked={businessType === 'uen'}
+                      onChange={(e) => setBusinessType(e.target.value as 'mobile' | 'uen')}
+                      className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 border-gray-300"
+                    />
+                    <div className="ml-3 flex-1">
+                      <div className={`text-sm font-medium ${uen ? 'text-gray-900' : 'text-gray-500'}`}>
+                        Business PayNow {!uen && '(Not configured)'}
                       </div>
-                    </label>
-                  )}
+                      <div className="text-xs text-gray-500">
+                        UEN: {uen || 'Use Settings to add UEN (e.g., 201234567A)'}
+                      </div>
+                    </div>
+                  </label>
                   
-                  {mobile && (
-                    <label className="flex items-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50">
-                      <input
-                        type="radio"
-                        value="mobile"
-                        checked={businessType === 'mobile'}
-                        onChange={(e) => setBusinessType(e.target.value as 'mobile' | 'uen')}
-                        className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 border-gray-300"
-                      />
-                      <div className="ml-3">
-                        <div className="text-sm font-medium text-gray-900">Individual PayNow</div>
-                        <div className="text-xs text-gray-500">Mobile: +65{mobile}</div>
+                  {/* Individual PayNow Option - Always show */}
+                  <label className={`flex items-center p-3 border rounded-lg ${
+                    mobile ? 'border-gray-200 hover:bg-gray-50' : 'border-orange-200 bg-orange-50'
+                  }`}>
+                    <input
+                      type="radio"
+                      value="mobile"
+                      checked={businessType === 'mobile'}
+                      onChange={(e) => setBusinessType(e.target.value as 'mobile' | 'uen')}
+                      className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 border-gray-300"
+                    />
+                    <div className="ml-3 flex-1">
+                      <div className={`text-sm font-medium ${mobile ? 'text-gray-900' : 'text-gray-500'}`}>
+                        Individual PayNow {!mobile && '(Not configured)'}
                       </div>
-                    </label>
-                  )}
+                      <div className="text-xs text-gray-500">
+                        Mobile: {mobile ? `+65${mobile.replace(/^\+65/, '')}` : 'Use Settings to add mobile (e.g., 91234567)'}
+                      </div>
+                    </div>
+                  </label>
                   
                   {!uen && !mobile && (
-                    <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
                       <div className="flex items-center space-x-2">
-                        <div className="w-5 h-5 bg-red-500 rounded-full flex items-center justify-center">
+                        <div className="w-5 h-5 bg-yellow-500 rounded-full flex items-center justify-center">
                           <span className="text-white text-xs font-bold">!</span>
                         </div>
                         <div>
-                          <h4 className="text-sm font-medium text-red-800">PayNow Not Configured</h4>
-                          <p className="text-xs text-red-700 mt-1">
-                            No UEN or mobile number configured for PayNow. Contact your administrator to set up payment methods.
+                          <h4 className="text-sm font-medium text-yellow-800">Quick Setup Required</h4>
+                          <p className="text-xs text-yellow-700 mt-1">
+                            Go to Settings and add either:
                           </p>
+                          <ul className="text-xs text-yellow-700 mt-1 list-disc list-inside">
+                            <li><strong>UEN</strong> for Business PayNow: 201234567A</li>
+                            <li><strong>Mobile</strong> for Individual PayNow: 91234567</li>
+                          </ul>
                         </div>
                       </div>
                     </div>
