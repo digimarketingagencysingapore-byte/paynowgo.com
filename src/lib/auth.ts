@@ -57,35 +57,14 @@ export async function verifyToken(token: string): Promise<SessionPayload> {
   }
 }
 
-// Merchant authentication
+// Merchant authentication - DEPRECATED: Use Supabase Auth instead
+// This function is kept for backward compatibility but should not be used
 export async function authenticateMerchant(email: string, password: string): Promise<MerchantUser | null> {
-  const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-  const { data: merchant, error } = await supabase
-    .from('merchants')
-    .select('*')
-    .eq('email', email)
-    .eq('status', 'active')
-    .single();
-
-  if (error || !merchant) {
-    return null;
-  }
-
-  const isValidPassword = await verifyPassword(password, merchant.password_hash);
-  if (!isValidPassword) {
-    return null;
-  }
-
-  return {
-    id: merchant.id,
-    businessName: merchant.business_name,
-    email: merchant.email,
-    uen: merchant.uen,
-    mobile: merchant.mobile,
-    status: merchant.status,
-    subscriptionPlan: merchant.subscription_plan
-  };
+  console.warn('⚠️ authenticateMerchant() is deprecated - use Supabase Auth instead');
+  
+  // This function no longer works since password_hash is no longer used
+  // All authentication should go through Supabase Auth
+  return null;
 }
 
 // Admin authentication
@@ -114,44 +93,18 @@ export async function authenticateAdmin(email: string, password: string): Promis
   };
 }
 
-// Create merchant
-export async function createMerchant(data: {
+// Create merchant - DEPRECATED: Use MerchantsDB.create() from admin-database.ts instead
+// This function is kept for backward compatibility but should not be used
+export async function createMerchant(_data: {
   businessName: string;
   email: string;
   password: string;
   uen?: string;
   mobile?: string;
 }): Promise<MerchantUser> {
-  const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-  const passwordHash = await hashPassword(data.password);
-
-  const { data: merchant, error } = await supabase
-    .from('merchants')
-    .insert({
-      business_name: data.businessName,
-      email: data.email,
-      password_hash: passwordHash,
-      uen: data.uen,
-      mobile: data.mobile,
-      status: 'active'
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw new Error(`Failed to create merchant: ${error.message}`);
-  }
-
-  return {
-    id: merchant.id,
-    businessName: merchant.business_name,
-    email: merchant.email,
-    uen: merchant.uen,
-    mobile: merchant.mobile,
-    status: merchant.status,
-    subscriptionPlan: merchant.subscription_plan
-  };
+  console.warn('⚠️ createMerchant() is deprecated - use MerchantsDB.create() from admin-database.ts instead');
+  
+  throw new Error('createMerchant() is deprecated. Use MerchantsDB.create() from admin-database.ts which properly creates Supabase Auth users.');
 }
 
 // Get all merchants (admin only)

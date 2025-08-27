@@ -107,7 +107,7 @@ export const AdminUsersDB = {
       // Use Supabase authentication
       const { user, error } = await authHelpers.signIn(email, password);
 
-      console.log('[ADMIN_AUTH] Sign in result:', { user, error });
+      console.log("[ADMIN_AUTH] Sign in result:", { user, error });
       if (error || !user) {
         console.log("[ADMIN_AUTH] Authentication failed:", error);
         return {
@@ -118,17 +118,22 @@ export const AdminUsersDB = {
 
       // If no profile, try to create one or fetch it with admin client
       if (!user.profile) {
-        console.log('[ADMIN_AUTH] No profile found, attempting to fetch with admin client...');
-        
+        console.log(
+          "[ADMIN_AUTH] No profile found, attempting to fetch with admin client..."
+        );
+
         // Try to get profile with admin client (bypasses RLS)
         const { data: profileData, error: profileError } = await supabaseAdmin
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
           .single();
-          
-        console.log('[ADMIN_AUTH] Admin client profile fetch:', { profileData, profileError });
-        
+
+        console.log("[ADMIN_AUTH] Admin client profile fetch:", {
+          profileData,
+          profileError,
+        });
+
         if (profileData) {
           // Add profile to user object
           user.profile = {
@@ -136,31 +141,35 @@ export const AdminUsersDB = {
             full_name: profileData.full_name,
             role: profileData.role,
             created_at: profileData.created_at,
-            updated_at: profileData.updated_at
+            updated_at: profileData.updated_at,
           };
-          console.log('[ADMIN_AUTH] Profile loaded with admin client:', user.profile);
-        } else if (email === 'admin@mail.com') {
+          console.log(
+            "[ADMIN_AUTH] Profile loaded with admin client:",
+            user.profile
+          );
+        } else if (email === "admin@mail.com") {
           // For the main admin user, create profile if it doesn't exist
-          console.log('[ADMIN_AUTH] Creating admin profile...');
-          const { data: createdProfile, error: createError } = await supabaseAdmin
-            .from('profiles')
-            .insert({
-              id: user.id,
-              full_name: 'System Administrator',
-              role: 'admin'
-            })
-            .select()
-            .single();
-            
+          console.log("[ADMIN_AUTH] Creating admin profile...");
+          const { data: createdProfile, error: createError } =
+            await supabaseAdmin
+              .from("profiles")
+              .insert({
+                id: user.id,
+                full_name: "System Administrator",
+                role: "admin",
+              })
+              .select()
+              .single();
+
           if (createdProfile && !createError) {
             user.profile = {
               id: createdProfile.id,
               full_name: createdProfile.full_name,
               role: createdProfile.role,
               created_at: createdProfile.created_at,
-              updated_at: createdProfile.updated_at
+              updated_at: createdProfile.updated_at,
             };
-            console.log('[ADMIN_AUTH] Admin profile created:', user.profile);
+            console.log("[ADMIN_AUTH] Admin profile created:", user.profile);
           }
         }
       }
@@ -322,8 +331,14 @@ export const MerchantsDB = {
       uen: merchant.uen || undefined,
       mobile: merchant.mobile || undefined,
       address: merchant.address || undefined,
-      status: (merchant.status as "active" | "suspended" | "pending" | "expired") || "active",
-      subscriptionPlan: (merchant.subscription_plan as "basic" | "professional" | "enterprise") || "basic",
+      status:
+        (merchant.status as "active" | "suspended" | "pending" | "expired") ||
+        "active",
+      subscriptionPlan:
+        (merchant.subscription_plan as
+          | "basic"
+          | "professional"
+          | "enterprise") || "basic",
       subscriptionStartsAt: merchant.subscription_starts_at || "",
       subscriptionExpiresAt: merchant.subscription_expires_at || "",
       paymentMethod: (merchant.payment_method as "uen" | "mobile") || "uen",
@@ -346,14 +361,14 @@ export const MerchantsDB = {
     monthlyRevenue?: number;
     subscriptionLink?: string;
   }): Promise<Merchant> {
-    console.log('=== MERCHANTS_DB CREATE FUNCTION START ===');
+    console.log("=== MERCHANTS_DB CREATE FUNCTION START ===");
     console.log("[MERCHANTS_DB] Function called at:", new Date().toISOString());
     console.log("[MERCHANTS_DB] Input data received:", data);
     console.log("[MERCHANTS_DB] Data types:", {
       businessName: typeof data.businessName,
-      email: typeof data.email, 
+      email: typeof data.email,
       password: typeof data.password,
-      monthlyRevenue: typeof data.monthlyRevenue
+      monthlyRevenue: typeof data.monthlyRevenue,
     });
 
     // Test connectivity and service role key first
@@ -361,35 +376,41 @@ export const MerchantsDB = {
     try {
       const testStartTime = Date.now();
       const { data: testData, error: testError } = await supabaseAdmin
-        .from('profiles')
-        .select('id')
+        .from("profiles")
+        .select("id")
         .limit(1);
       const testTime = Date.now() - testStartTime;
-      
-      console.log(`[MERCHANTS_DB] Connectivity test completed in ${testTime}ms`);
-      console.log('[MERCHANTS_DB] Test result:', { testData, testError });
-      
+
+      console.log(
+        `[MERCHANTS_DB] Connectivity test completed in ${testTime}ms`
+      );
+      console.log("[MERCHANTS_DB] Test result:", { testData, testError });
+
       if (testError) {
-        console.log('[MERCHANTS_DB] ❌ CONNECTIVITY TEST FAILED:');
-        console.log('[MERCHANTS_DB] This suggests service role key or database issue');
-        console.log('[MERCHANTS_DB] Test error:', testError);
+        console.log("[MERCHANTS_DB] ❌ CONNECTIVITY TEST FAILED:");
+        console.log(
+          "[MERCHANTS_DB] This suggests service role key or database issue"
+        );
+        console.log("[MERCHANTS_DB] Test error:", testError);
       } else {
-        console.log('[MERCHANTS_DB] ✅ Connectivity test passed');
+        console.log("[MERCHANTS_DB] ✅ Connectivity test passed");
       }
     } catch (connectError) {
-      console.log('[MERCHANTS_DB] ❌ CONNECTIVITY EXCEPTION:');
-      console.error('[MERCHANTS_DB] Connection exception:', connectError);
+      console.log("[MERCHANTS_DB] ❌ CONNECTIVITY EXCEPTION:");
+      console.error("[MERCHANTS_DB] Connection exception:", connectError);
     }
 
     let userResult;
     try {
-      console.log("[MERCHANTS_DB] About to create user account for merchant...");
+      console.log(
+        "[MERCHANTS_DB] About to create user account for merchant..."
+      );
       console.log("[MERCHANTS_DB] Calling authHelpers.adminCreateUser with:", {
         email: data.email,
         businessName: data.businessName,
-        role: "user"
+        role: "user",
       });
-      
+
       const startTime = Date.now();
       userResult = await authHelpers.adminCreateUser(
         data.email,
@@ -398,8 +419,10 @@ export const MerchantsDB = {
         "user" // Merchants have 'user' role
       );
       const userCreationTime = Date.now() - startTime;
-      
-      console.log(`[MERCHANTS_DB] User creation completed in ${userCreationTime}ms`);
+
+      console.log(
+        `[MERCHANTS_DB] User creation completed in ${userCreationTime}ms`
+      );
       console.log("[MERCHANTS_DB] User creation result:", userResult);
 
       if (userResult.error || !userResult.user) {
@@ -410,15 +433,15 @@ export const MerchantsDB = {
       }
 
       console.log("[MERCHANTS_DB] ✅ User created successfully!");
-      console.log('[MERCHANTS_DB] Created user ID:', userResult.user.id);
-      console.log('[MERCHANTS_DB] User email:', userResult.user.email);
-      console.log('[MERCHANTS_DB] User profile:', userResult.user.profile);
-      
-      console.log('[MERCHANTS_DB] Now proceeding to create merchant record...');
+      console.log("[MERCHANTS_DB] Created user ID:", userResult.user.id);
+      console.log("[MERCHANTS_DB] User email:", userResult.user.email);
+      console.log("[MERCHANTS_DB] User profile:", userResult.user.profile);
+
+      console.log("[MERCHANTS_DB] Now proceeding to create merchant record...");
     } catch (userError) {
       console.log("[MERCHANTS_DB] ❌ EXCEPTION during user creation:");
       console.error("[MERCHANTS_DB] Exception details:", userError);
-      console.log('=== MERCHANTS_DB CREATE FUNCTION END (ERROR) ===');
+      console.log("=== MERCHANTS_DB CREATE FUNCTION END (ERROR) ===");
       throw userError;
     }
 
@@ -427,26 +450,33 @@ export const MerchantsDB = {
       // Create merchant record with profile reference
       const merchantData = {
         profile_id: userResult.user.id,
-      business_name: data.businessName,
-      email: data.email,
-      password_hash: data.password, // Store plaintext for demo purposes
-      uen: data.uen || null,
-      mobile: data.mobile || null,
-      address: data.address || null,
-      subscription_plan: data.subscriptionPlan || "basic",
-      subscription_link: data.subscriptionLink || null,
-      monthly_revenue: data.monthlyRevenue || null,
-      subscription_starts_at: new Date().toISOString(),
-      subscription_expires_at: new Date(
-        Date.now() + 365 * 24 * 60 * 60 * 1000
-      ).toISOString(),
-      status: "active" as const,
-      payment_method: data.uen ? ("uen" as const) : (data.mobile ? ("mobile" as const) : null),
-      settings: {}
-    };
+        business_name: data.businessName,
+        email: data.email,
+        password_hash: "UNUSED_AUTH_VIA_SUPABASE", // Placeholder - auth handled by Supabase
+        uen: data.uen || null,
+        mobile: data.mobile || null,
+        address: data.address || null,
+        subscription_plan: data.subscriptionPlan || "basic",
+        subscription_link: data.subscriptionLink || null,
+        monthly_revenue: data.monthlyRevenue || null,
+        subscription_starts_at: new Date().toISOString(),
+        subscription_expires_at: new Date(
+          Date.now() + 365 * 24 * 60 * 60 * 1000
+        ).toISOString(),
+        status: "active" as const,
+        payment_method: data.uen
+          ? ("uen" as const)
+          : data.mobile
+          ? ("mobile" as const)
+          : null,
+        settings: {},
+      };
 
-      console.log('[MERCHANTS_DB] Final merchant data to insert:', merchantData);
-      console.log('[MERCHANTS_DB] Attempting database insert...');
+      console.log(
+        "[MERCHANTS_DB] Final merchant data to insert:",
+        merchantData
+      );
+      console.log("[MERCHANTS_DB] Attempting database insert...");
 
       const insertStartTime = Date.now();
       const { data: result, error } = await supabaseAdmin
@@ -456,21 +486,26 @@ export const MerchantsDB = {
         .single();
       const insertTime = Date.now() - insertStartTime;
 
-      console.log(`[MERCHANTS_DB] Database insert completed in ${insertTime}ms`);
-      console.log('[MERCHANTS_DB] Insert result:', { result, error });
+      console.log(
+        `[MERCHANTS_DB] Database insert completed in ${insertTime}ms`
+      );
+      console.log("[MERCHANTS_DB] Insert result:", { result, error });
 
       if (error) {
-        console.log('[MERCHANTS_DB] ❌ MERCHANT CREATION FAILED:');
-        console.error('[MERCHANTS_DB] Database error:', error);
-        console.log('[MERCHANTS_DB] Error code:', error.code);
-        console.log('[MERCHANTS_DB] Error message:', error.message);
-        console.log('[MERCHANTS_DB] Error details:', error.details);
-        
+        console.log("[MERCHANTS_DB] ❌ MERCHANT CREATION FAILED:");
+        console.error("[MERCHANTS_DB] Database error:", error);
+        console.log("[MERCHANTS_DB] Error code:", error.code);
+        console.log("[MERCHANTS_DB] Error message:", error.message);
+        console.log("[MERCHANTS_DB] Error details:", error.details);
+
         // If merchant creation fails, cleanup the user account
         try {
-          console.log('[MERCHANTS_DB] Attempting to cleanup user account:', userResult.user.id);
+          console.log(
+            "[MERCHANTS_DB] Attempting to cleanup user account:",
+            userResult.user.id
+          );
           await supabaseAdmin.auth.admin.deleteUser(userResult.user.id);
-          console.log('[MERCHANTS_DB] User account cleaned up successfully');
+          console.log("[MERCHANTS_DB] User account cleaned up successfully");
         } catch (cleanupError) {
           console.error(
             "[MERCHANTS_DB] Failed to cleanup user after merchant creation failure:",
@@ -481,12 +516,17 @@ export const MerchantsDB = {
       }
 
       if (!result) {
-        console.log('[MERCHANTS_DB] ❌ No result returned from merchant creation');
-        throw new Error('Failed to create merchant: No result returned');
+        console.log(
+          "[MERCHANTS_DB] ❌ No result returned from merchant creation"
+        );
+        throw new Error("Failed to create merchant: No result returned");
       }
 
-      console.log('[MERCHANTS_DB] ✅ Merchant record created successfully:', result);
-      console.log('[MERCHANTS_DB] Building return object...');
+      console.log(
+        "[MERCHANTS_DB] ✅ Merchant record created successfully:",
+        result
+      );
+      console.log("[MERCHANTS_DB] Building return object...");
 
       const merchantResponse = {
         id: result.id,
@@ -495,11 +535,19 @@ export const MerchantsDB = {
         uen: result.uen || undefined,
         mobile: result.mobile || undefined,
         address: result.address || undefined,
-        status: (result.status as "active" | "suspended" | "pending" | "expired") || "active",
-        subscriptionPlan: (result.subscription_plan as "basic" | "professional" | "enterprise") || "basic",
+        status:
+          (result.status as "active" | "suspended" | "pending" | "expired") ||
+          "active",
+        subscriptionPlan:
+          (result.subscription_plan as
+            | "basic"
+            | "professional"
+            | "enterprise") || "basic",
         subscriptionStartsAt: result.subscription_starts_at || "",
         subscriptionExpiresAt: result.subscription_expires_at || "",
-        paymentMethod: (result.payment_method as "uen" | "mobile") || (data.uen ? "uen" : "mobile"),
+        paymentMethod:
+          (result.payment_method as "uen" | "mobile") ||
+          (data.uen ? "uen" : "mobile"),
         settings: (result.settings as Record<string, any>) || {},
         monthlyRevenue: result.monthly_revenue || 0,
         subscriptionLink: result.subscription_link || "",
@@ -507,14 +555,16 @@ export const MerchantsDB = {
         updatedAt: result.updated_at || "",
       };
 
-      console.log('[MERCHANTS_DB] Final merchant response:', merchantResponse);
-      console.log('=== MERCHANTS_DB CREATE FUNCTION END (SUCCESS) ===');
+      console.log("[MERCHANTS_DB] Final merchant response:", merchantResponse);
+      console.log("=== MERCHANTS_DB CREATE FUNCTION END (SUCCESS) ===");
       return merchantResponse;
-
     } catch (merchantError) {
       console.log("[MERCHANTS_DB] ❌ EXCEPTION during merchant creation:");
-      console.error("[MERCHANTS_DB] Merchant creation exception:", merchantError);
-      console.log('=== MERCHANTS_DB CREATE FUNCTION END (ERROR) ===');
+      console.error(
+        "[MERCHANTS_DB] Merchant creation exception:",
+        merchantError
+      );
+      console.log("=== MERCHANTS_DB CREATE FUNCTION END (ERROR) ===");
       throw merchantError;
     }
   },
@@ -532,11 +582,16 @@ export const MerchantsDB = {
       subscriptionLink?: string;
     }
   ): Promise<Merchant> {
-    console.log('=== MERCHANTS_DB UPDATE START ===');
+    console.log("=== MERCHANTS_DB UPDATE START ===");
     console.log("[MERCHANTS_DB] Function called at:", new Date().toISOString());
     console.log("[MERCHANTS_DB] Updating merchant ID:", id);
     console.log("[MERCHANTS_DB] Input data:", data);
-    console.log("[MERCHANTS_DB] Data types:", Object.keys(data).map(key => `${key}: ${typeof data[key as keyof typeof data]}`));
+    console.log(
+      "[MERCHANTS_DB] Data types:",
+      Object.keys(data).map(
+        (key) => `${key}: ${typeof data[key as keyof typeof data]}`
+      )
+    );
 
     try {
       const updateData: any = {
@@ -565,36 +620,54 @@ export const MerchantsDB = {
       }
       if (data.subscriptionPlan !== undefined) {
         updateData.subscription_plan = data.subscriptionPlan;
-        console.log("[MERCHANTS_DB] Setting subscription_plan:", data.subscriptionPlan);
+        console.log(
+          "[MERCHANTS_DB] Setting subscription_plan:",
+          data.subscriptionPlan
+        );
       }
       if (data.monthlyRevenue !== undefined) {
         updateData.monthly_revenue = data.monthlyRevenue;
-        console.log("[MERCHANTS_DB] Setting monthly_revenue:", data.monthlyRevenue);
+        console.log(
+          "[MERCHANTS_DB] Setting monthly_revenue:",
+          data.monthlyRevenue
+        );
       }
       if (data.subscriptionLink !== undefined) {
         updateData.subscription_link = data.subscriptionLink;
-        console.log("[MERCHANTS_DB] Setting subscription_link:", data.subscriptionLink);
+        console.log(
+          "[MERCHANTS_DB] Setting subscription_link:",
+          data.subscriptionLink
+        );
       }
 
       console.log("[MERCHANTS_DB] Final updateData object:", updateData);
-      console.log("[MERCHANTS_DB] About to call supabaseAdmin.from('merchants').update()...");
+      console.log(
+        "[MERCHANTS_DB] About to call supabaseAdmin.from('merchants').update()..."
+      );
 
       // Debug supabaseAdmin client
       console.log("[MERCHANTS_DB] Checking supabaseAdmin client:");
       console.log("[MERCHANTS_DB] supabaseAdmin exists:", !!supabaseAdmin);
-      console.log("[MERCHANTS_DB] supabaseAdmin.supabaseUrl:", supabaseAdmin.supabaseUrl);
-      console.log("[MERCHANTS_DB] supabaseAdmin.supabaseKey length:", supabaseAdmin.supabaseKey?.length);
-      
+
       // Debug environment variables
       const serviceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       console.log("[MERCHANTS_DB] Environment check:");
       console.log("[MERCHANTS_DB] VITE_SUPABASE_URL exists:", !!supabaseUrl);
       console.log("[MERCHANTS_DB] VITE_SUPABASE_URL:", supabaseUrl);
-      console.log("[MERCHANTS_DB] VITE_SUPABASE_SERVICE_ROLE_KEY exists:", !!serviceRoleKey);
-      console.log("[MERCHANTS_DB] VITE_SUPABASE_SERVICE_ROLE_KEY length:", serviceRoleKey?.length);
-      console.log("[MERCHANTS_DB] VITE_SUPABASE_SERVICE_ROLE_KEY preview:", serviceRoleKey?.substring(0, 20) + '...');
-      
+      console.log(
+        "[MERCHANTS_DB] VITE_SUPABASE_SERVICE_ROLE_KEY exists:",
+        !!serviceRoleKey
+      );
+      console.log(
+        "[MERCHANTS_DB] VITE_SUPABASE_SERVICE_ROLE_KEY length:",
+        serviceRoleKey?.length
+      );
+      console.log(
+        "[MERCHANTS_DB] VITE_SUPABASE_SERVICE_ROLE_KEY preview:",
+        serviceRoleKey?.substring(0, 20) + "..."
+      );
+
       // Test simple query first
       console.log("[MERCHANTS_DB] Testing simple select query first...");
       try {
@@ -610,20 +683,26 @@ export const MerchantsDB = {
 
       console.log("[MERCHANTS_DB] Now attempting the actual update...");
       const updateStartTime = Date.now();
-      
+
       const updateQuery = supabaseAdmin
         .from("merchants")
         .update(updateData)
         .eq("id", id)
         .select()
         .single();
-        
-      console.log("[MERCHANTS_DB] Update query object created, now executing...");
-      
+
+      console.log(
+        "[MERCHANTS_DB] Update query object created, now executing..."
+      );
+
       const { data: result, error } = await updateQuery;
       const updateEndTime = Date.now();
 
-      console.log(`[MERCHANTS_DB] Supabase update completed in ${updateEndTime - updateStartTime}ms`);
+      console.log(
+        `[MERCHANTS_DB] Supabase update completed in ${
+          updateEndTime - updateStartTime
+        }ms`
+      );
       console.log("[MERCHANTS_DB] Supabase result:", result);
       console.log("[MERCHANTS_DB] Supabase error:", error);
 
@@ -637,7 +716,9 @@ export const MerchantsDB = {
       }
 
       if (!result) {
-        console.log("[MERCHANTS_DB] ❌ No result returned from update operation");
+        console.log(
+          "[MERCHANTS_DB] ❌ No result returned from update operation"
+        );
         throw new Error("No merchant found with the provided ID");
       }
 
@@ -651,8 +732,14 @@ export const MerchantsDB = {
         uen: result.uen || undefined,
         mobile: result.mobile || undefined,
         address: result.address || undefined,
-        status: (result.status as "active" | "suspended" | "pending" | "expired") || "active",
-        subscriptionPlan: (result.subscription_plan as "basic" | "professional" | "enterprise") || "basic",
+        status:
+          (result.status as "active" | "suspended" | "pending" | "expired") ||
+          "active",
+        subscriptionPlan:
+          (result.subscription_plan as
+            | "basic"
+            | "professional"
+            | "enterprise") || "basic",
         subscriptionStartsAt: result.subscription_starts_at || "",
         subscriptionExpiresAt: result.subscription_expires_at || "",
         paymentMethod:
@@ -666,21 +753,23 @@ export const MerchantsDB = {
       };
 
       console.log("[MERCHANTS_DB] Final response object:", updatedMerchant);
-      console.log('=== MERCHANTS_DB UPDATE END (SUCCESS) ===');
+      console.log("=== MERCHANTS_DB UPDATE END (SUCCESS) ===");
       return updatedMerchant;
-
     } catch (error) {
       console.log("[MERCHANTS_DB] ❌ EXCEPTION in update function:");
       console.error("[MERCHANTS_DB] Exception details:", error);
       console.log("[MERCHANTS_DB] Exception type:", typeof error);
-      console.log("[MERCHANTS_DB] Exception constructor:", error?.constructor?.name);
-      
+      console.log(
+        "[MERCHANTS_DB] Exception constructor:",
+        error?.constructor?.name
+      );
+
       if (error instanceof Error) {
         console.log("[MERCHANTS_DB] Exception message:", error.message);
         console.log("[MERCHANTS_DB] Exception stack:", error.stack);
       }
-      
-      console.log('=== MERCHANTS_DB UPDATE END (ERROR) ===');
+
+      console.log("=== MERCHANTS_DB UPDATE END (ERROR) ===");
       throw error;
     }
   },
@@ -711,8 +800,12 @@ export const MerchantsDB = {
       uen: result.uen || undefined,
       mobile: result.mobile || undefined,
       address: result.address || undefined,
-      status: (result.status as "active" | "suspended" | "pending" | "expired") || "active",
-      subscriptionPlan: (result.subscription_plan as "basic" | "professional" | "enterprise") || "basic",
+      status:
+        (result.status as "active" | "suspended" | "pending" | "expired") ||
+        "active",
+      subscriptionPlan:
+        (result.subscription_plan as "basic" | "professional" | "enterprise") ||
+        "basic",
       subscriptionStartsAt: result.subscription_starts_at || "",
       subscriptionExpiresAt: result.subscription_expires_at || "",
       paymentMethod: (result.payment_method as "uen" | "mobile") || "uen",
