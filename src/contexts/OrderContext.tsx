@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { MerchantOrdersAPI } from '../lib/merchant-database';
+import { MerchantOrdersDB, type MerchantOrder } from '../lib/merchant-database';
 import { terminalSync, DEFAULT_TERMINALS } from '../lib/terminal-sync';
 
 export interface Order {
@@ -44,52 +44,40 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
   const loadOrdersFromSupabase = async () => {
     try {
-      console.log('[ORDER_CONTEXT] Loading orders from Supabase...');
-      setCurrentMerchantId('00000000-0000-0000-0000-000000000001');
+      console.log('[ORDER_CONTEXT] Loading orders using MerchantOrdersDB...');
       
-      // Load orders directly from Supabase
-      const response = await fetch('/api/orders', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        console.error('[ORDER_CONTEXT] Failed to load orders:', response.status);
-        return;
-      }
-      
-      const data = await response.json();
-      const merchantOrders = data.orders || [];
+      // Use the new MerchantOrdersDB to get orders for current merchant
+      const merchantOrders = await MerchantOrdersDB.getAll();
       console.log('[ORDER_CONTEXT] Loaded orders from database:', merchantOrders.length);
       
-      // Convert to Order format
-      const formattedOrders = merchantOrders.map((order: any) => ({
-        id: order.id,
-        reference: order.reference,
-        description: (() => {
-          try {
-            return 'PayNow Payment';
-          } catch {
-            return 'PayNow Payment';
-          }
-        })(),
-        amount: order.amount_cents ? order.amount_cents / 100 : order.amount,
-        status: order.status,
-        timestamp: new Date(order.created_at).toLocaleTimeString(),
-        createdAt: new Date(order.created_at),
-        items: (() => {
-          try {
-            return order.items || [];
-          } catch {
-            return [];
-          }
-        })(),
-        merchantId: order.tenant_id || merchant.id
-      }));
+      // Convert MerchantOrder to Order format
+      const formattedOrders: Order[] = merchantOrders.map((order: MerchantOrder) => {
+        let parsedPayload: any = {};
+        try {
+          parsedPayload = order.payload ? JSON.parse(order.payload) : {};
+        } catch (error) {
+          console.warn('[ORDER_CONTEXT] Failed to parse payload for order:', order.id, error);
+        }
+
+        return {
+          id: order.id,
+          reference: order.reference,
+          description: parsedPayload.description || 'PayNow Payment',
+          amount: order.amount,
+          status: order.status as 'pending' | 'paid' | 'failed',
+          timestamp: new Date(order.created_at).toLocaleTimeString(),
+          createdAt: new Date(order.created_at),
+          items: parsedPayload.items || [],
+          merchantId: order.tenant_id
+        };
+      });
       
       setOrders(formattedOrders);
+      
+      // Set current merchant ID from first order (if any)
+      if (formattedOrders.length > 0) {
+        setCurrentMerchantId(formattedOrders[0].merchantId || null);
+      }
     } catch (error) {
       console.error('[ORDER_CONTEXT] Error loading merchant orders:', error);
       setOrders([]); // Set empty array on error
@@ -112,60 +100,41 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const createOrder = async (orderData: Omit<Order, 'id' | 'status' | 'timestamp' | 'createdAt'>): Promise<Order> => {
     console.log('[ORDER_CONTEXT] Creating new order:', orderData);
     
-    if (!currentMerchantId) {
-      console.error('[ORDER_CONTEXT] No current merchant ID');
-      throw new Error('No merchant logged in');
-    }
-    
     try {
-      // Create order via API
-      const response = await fetch('/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          tenantId: currentMerchantId,
-          amount: orderData.amount,
-          reference: orderData.reference,
-          items: orderData.items?.map(item => ({
-            itemId: item.id,
-            name: item.name,
-            unitPriceCents: item.unitPriceCents,
-            qty: item.quantity
-          })) || [],
-          qrSvg: orderData.qrSvg || '',
-          qrText: orderData.qrSvg || '',
-          idempotencyKey: crypto.randomUUID(),
-          expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
-        })
+      // Create order using MerchantOrdersDB
+      const dbOrder = await MerchantOrdersDB.create({
+        reference: orderData.reference,
+        amount: orderData.amount,
+        description: orderData.description,
+        qrSvg: orderData.qrSvg || undefined,
+        items: orderData.items || []
       });
       
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        console.error('[ORDER_CONTEXT] API error:', errorData);
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+      console.log('[ORDER_CONTEXT] Order created via MerchantOrdersDB:', dbOrder.id);
+      
+      // Convert MerchantOrder to Order format
+      let parsedPayload: any = {};
+      try {
+        parsedPayload = dbOrder.payload ? JSON.parse(dbOrder.payload) : {};
+      } catch (error) {
+        console.warn('[ORDER_CONTEXT] Failed to parse payload:', error);
       }
-      
-      const dbOrder = await response.json();
-      
-      console.log('[ORDER_CONTEXT] Order created via API:', dbOrder.orderId);
-      
-      // Convert to Order format
+
       const newOrder: Order = {
-        id: dbOrder.orderId,
+        id: dbOrder.id,
         reference: dbOrder.reference,
-        description: orderData.description || 'PayNow Payment',
+        description: parsedPayload.description || orderData.description || 'PayNow Payment',
         amount: dbOrder.amount,
-        status: dbOrder.status || 'pending',
-        timestamp: new Date().toLocaleTimeString(),
-        createdAt: new Date(),
-        items: orderData.items || [],
-        merchantId: currentMerchantId
+        status: dbOrder.status as 'pending' | 'paid' | 'failed',
+        timestamp: new Date(dbOrder.created_at).toLocaleTimeString(),
+        createdAt: new Date(dbOrder.created_at),
+        items: parsedPayload.items || orderData.items || [],
+        merchantId: dbOrder.tenant_id
       };
       
-      // Update local state
+      // Update local state and current merchant ID
       setOrders(prev => [newOrder, ...prev]);
+      setCurrentMerchantId(dbOrder.tenant_id);
       
       return newOrder;
     } catch (error) {
@@ -175,52 +144,52 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   };
 
   const updateOrderStatus = async (id: string, status: 'pending' | 'paid' | 'failed') => {
-    if (!currentMerchantId) return;
-    
     try {
-      // Update via API
-      const endpoint = status === 'paid' ? `/api/orders/${id}/mark-paid` : `/api/orders/${id}/cancel`;
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
+      // Update status using MerchantOrdersDB
+      const dbStatus = status === 'failed' ? 'canceled' : status;
+      const updatedOrder = await MerchantOrdersDB.updateStatus(id, dbStatus as 'paid' | 'canceled');
+      
+      if (updatedOrder) {
+        console.log('[ORDER_CONTEXT] Order status updated in database');
+        
+        // Update local state
+        setOrders(prev => prev.map(order =>
+          order.id === id
+            ? { ...order, status, timestamp: new Date().toLocaleTimeString() }
+            : order
+        ));
+        
+        // If marking as paid, hide QR code
+        if (status === 'paid') {
+          // Clear QR from ALL terminals
+          await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_1);
+          await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_2);
         }
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
-      }
-      
-      console.log('[ORDER_CONTEXT] Order status updated in database');
-      
-      // Update local state
-      setOrders(prev => prev.map(order =>
-        order.id === id
-          ? { ...order, status, timestamp: new Date().toLocaleTimeString() }
-          : order
-      ));
-      
-      // If marking as paid, hide QR code
-      if (status === 'paid') {
-        // Clear QR from ALL terminals
-        await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_1);
-        await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_2);
       }
     } catch (error) {
       console.error('[ORDER_CONTEXT] Error updating order status:', error);
-      alert('Failed to update order status: ' + error.message);
+      alert('Failed to update order status: ' + (error instanceof Error ? error.message : 'Unknown error'));
     }
   };
 
   const markOrderPaid = async (reference: string) => {
-    if (!currentMerchantId) return;
-    
     try {
-      // Find order by reference
-      const order = orders.find(o => o.reference === reference);
-      if (order) {
-        await updateOrderStatus(order.id, 'paid');
+      // Mark as paid using MerchantOrdersDB
+      const updatedOrder = await MerchantOrdersDB.markPaidByReference(reference);
+      
+      if (updatedOrder) {
+        console.log('[ORDER_CONTEXT] Order marked as paid in database');
+        
+        // Update local state
+        setOrders(prev => prev.map(order =>
+          order.reference === reference
+            ? { ...order, status: 'paid' as const, timestamp: new Date().toLocaleTimeString() }
+            : order
+        ));
+        
+        // Clear QR from ALL terminals
+        await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_1);
+        await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_2);
       }
     } catch (error) {
       console.error('[ORDER_CONTEXT] Error marking order paid:', error);
@@ -228,25 +197,30 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   };
 
   const deleteOrder = async (id: string) => {
-    if (!currentMerchantId) return;
-    
     const orderToDelete = orders.find(o => o.id === id);
     if (!orderToDelete) return;
     
     if (window.confirm(`Are you sure you want to delete order ${orderToDelete.reference}?`)) {
       try {
-        // Delete from database would go here (not implemented in current schema)
-        // For now, just update local state
-        setOrders(prev => prev.filter(order => order.id !== id));
+        // Delete from database using MerchantOrdersDB
+        const success = await MerchantOrdersDB.delete(id);
         
-        // If it's a pending order, hide QR code
-        if (orderToDelete.status === 'pending') {
-          // Clear QR from ALL terminals
-          await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_1);
-          await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_2);
+        if (success) {
+          // Update local state
+          setOrders(prev => prev.filter(order => order.id !== id));
+          
+          // If it's a pending order, hide QR code
+          if (orderToDelete.status === 'pending') {
+            // Clear QR from ALL terminals
+            await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_1);
+            await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_2);
+          }
+          
+          console.log('[ORDER_CONTEXT] Order deleted successfully');
         }
       } catch (error) {
         console.error('[ORDER_CONTEXT] Error deleting order:', error);
+        alert('Failed to delete order: ' + (error instanceof Error ? error.message : 'Unknown error'));
       }
     }
   };

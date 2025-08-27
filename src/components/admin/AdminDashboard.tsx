@@ -5,11 +5,15 @@ import { Plus, Users, Building2, CheckCircle, XCircle, Clock, LogOut, Edit3, Bar
 import { CreateMerchantModal } from './CreateMerchantModal';
 import { EditMerchantModal } from './EditMerchantModal';
 import { CMSEditor } from './CMSEditor';
-import { MerchantsDB, needsAdminMigration, migrateAdminData } from '../../lib/admin-database';
-
+import { MerchantsDB, needsAdminMigration, migrateAdminData, AdminUsersDB } from '../../lib/admin-database';
 import type { Merchant } from '../../lib/admin-database';
+import type { AuthUser } from '../../../types';
 
-export function AdminDashboard() {
+interface AdminDashboardProps {
+  currentUser: AuthUser;
+}
+
+export function AdminDashboard({ currentUser }: AdminDashboardProps) {
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -25,20 +29,22 @@ export function AdminDashboard() {
     setIsLoading(true);
     setError(''); // Clear any previous errors
     try {
-      const token = localStorage.getItem('admin_token');
-      if (!token) {
+      // Verify current user is still authenticated and is admin
+      const user = await AdminUsersDB.getCurrentUser();
+      if (!user) {
+        console.log('[ADMIN_DASHBOARD] No authenticated user found, redirecting to login');
         window.location.href = '/admin';
         return;
       }
 
-      // Check if migration is needed
+      // Check if migration is needed (legacy function - can be removed eventually)
       if (needsAdminMigration()) {
         console.log('[ADMIN_DASHBOARD] Migration needed, performing migration...');
         await migrateAdminData();
       }
       
-      // Load merchants from database
-      const merchantsData = await MerchantsDB.getAll(token);
+      // Load merchants from database using admin client
+      const merchantsData = await MerchantsDB.getAll();
       console.log('[ADMIN_DASHBOARD] Merchants loaded from database:', merchantsData.length);
       console.log('[ADMIN_DASHBOARD] Merchants data:', merchantsData.map(m => ({ id: m.id, name: m.businessName, email: m.email })));
       setMerchants(merchantsData);
@@ -122,10 +128,16 @@ export function AdminDashboard() {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('admin_token');
-    localStorage.removeItem('admin_data');
-    window.location.href = '/admin';
+  const handleLogout = async () => {
+    try {
+      console.log('[ADMIN_DASHBOARD] Logging out admin user');
+      await AdminUsersDB.signOut();
+      window.location.href = '/admin';
+    } catch (error) {
+      console.error('[ADMIN_DASHBOARD] Error during logout:', error);
+      // Force redirect even if logout fails
+      window.location.href = '/admin';
+    }
   };
 
   const getStatusIcon = (status: string) => {
@@ -177,7 +189,10 @@ export function AdminDashboard() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">PayNowGo Admin</h1>
-                <p className="text-sm text-gray-600">System Administration Dashboard</p>
+                <p className="text-sm text-gray-600">
+                  Welcome, {currentUser.profile?.full_name || currentUser.email} 
+                  {currentUser.profile?.role === 'admin' && <span className="ml-1 text-emerald-600 font-medium">(Admin)</span>}
+                </p>
               </div>
             </div>
             <button

@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { Eye, EyeOff, Loader2, Store, CreditCard } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { MerchantsDB } from '../lib/admin-database';
-import { signToken } from '../lib/auth';
 
 interface MerchantLoginProps {
   onLoginSuccess: () => void;
@@ -21,106 +19,120 @@ export function MerchantLogin({ onLoginSuccess }: MerchantLoginProps) {
     setError('');
 
     try {
-      console.log('[MERCHANT_LOGIN] Attempting login with:', email);
+      console.log('=== MERCHANT LOGIN START ===');
+      console.log('[MERCHANT_LOGIN] Attempting login at:', new Date().toISOString());
+      console.log('[MERCHANT_LOGIN] Email:', email);
       console.log('[MERCHANT_LOGIN] Environment:', window.location.hostname);
       
-      // Try Supabase first, then fallback to localStorage
-      let merchant = null;
-      
-      try {
-        const { data: supabaseMerchant, error } = await supabase
-          .from('merchants')
-          .select('*')
-          .eq('email', email)
-          .eq('status', 'active')
-          .maybeSingle();
-        
-        if (supabaseMerchant) {
-          merchant = supabaseMerchant;
-          console.log('[MERCHANT_LOGIN] Merchant found in Supabase:', merchant.business_name);
-        }
-      } catch (supabaseError) {
-        console.warn('[MERCHANT_LOGIN] Supabase query failed, trying localStorage:', supabaseError);
-      }
-      
-      // Fallback to localStorage if Supabase failed or no merchant found
-      if (!merchant) {
-        console.log('[MERCHANT_LOGIN] Trying localStorage fallback for email:', email);
-        
-        // Force re-initialization of merchants data
-        localStorage.removeItem('paynowgo_merchants'); // Clear any stale data
-        const { getMerchantsFromLocalStorage } = await import('../lib/admin-database');
-        const merchants = getMerchantsFromLocalStorage(); // This will reinitialize with correct data
-        
-        console.log('[MERCHANT_LOGIN] Available merchants:', merchants.map(m => ({ email: m.email, status: m.status })));
-        
-        const localMerchant = merchants.find(m => 
-          m.email === email && m.status === 'active'
-        );
-        
-        if (localMerchant) {
-          // Convert localStorage format to Supabase format
-          merchant = {
-            id: localMerchant.id,
-            business_name: localMerchant.businessName,
-            email: localMerchant.email,
-            uen: localMerchant.uen,
-            mobile: localMerchant.mobile,
-            status: localMerchant.status,
-            subscription_plan: localMerchant.subscriptionPlan,
-            address: localMerchant.address,
-            password: localMerchant.password
-          };
-          console.log('[MERCHANT_LOGIN] Merchant found in localStorage:', merchant.business_name);
-        }
-      }
-      
-      if (!merchant) {
-        console.log('[MERCHANT_LOGIN] Merchant not found in Supabase or localStorage for email:', email);
-        console.log('[MERCHANT_LOGIN] Expected email: test@merchant.com');
-        throw new Error('Invalid email or password');
-      }
-      
-      // Password validation
-      const isValidPassword = password === '12345678';
-      console.log('[MERCHANT_LOGIN] Password check:', { provided: password, expected: '12345678', valid: isValidPassword });
-      
-      if (!isValidPassword) {
-        console.log('[MERCHANT_LOGIN] Invalid password for:', email);
-        throw new Error('Invalid email or password');
-      }
-      
-      console.log('[MERCHANT_LOGIN] Login successful for:', merchant.business_name);
-      
-      // Generate proper JWT token
-      const token = await signToken({
-        userId: merchant.id,
-        userType: 'merchant',
-        email: merchant.email
+      // Step 1: Authenticate with Supabase Auth
+      console.log('[MERCHANT_LOGIN] Step 1: Authenticating with Supabase Auth...');
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password
       });
       
+      if (authError || !authData.user) {
+        console.log('[MERCHANT_LOGIN] ❌ Supabase Auth failed:', authError);
+        throw new Error('Invalid email or password');
+      }
+      
+      console.log('[MERCHANT_LOGIN] ✅ Supabase Auth successful for user ID:', authData.user.id);
+      
+      // Step 2: Get user profile to check role
+      console.log('[MERCHANT_LOGIN] Step 2: Getting user profile...');
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authData.user.id)
+        .single();
+        
+      if (profileError || !profile) {
+        console.log('[MERCHANT_LOGIN] ❌ Profile not found:', profileError);
+        await supabase.auth.signOut(); // Sign out if profile doesn't exist
+        throw new Error('User profile not found. Please contact administrator.');
+      }
+      
+      console.log('[MERCHANT_LOGIN] ✅ Profile found:', profile);
+      
+      // Step 3: Check if user has merchant role (should be 'user' not 'admin')
+      if (profile.role === 'admin') {
+        console.log('[MERCHANT_LOGIN] ❌ Admin trying to login as merchant');
+        await supabase.auth.signOut();
+        throw new Error('Admin users should use the admin login page');
+      }
+      
+      // Step 4: Get merchant data linked to this profile
+      console.log('[MERCHANT_LOGIN] Step 3: Getting merchant data for profile_id:', profile.id);
+      const { data: merchant, error: merchantError } = await supabase
+        .from('merchants')
+        .select('*')
+        .eq('profile_id', profile.id)
+        .single();
+        
+      if (merchantError || !merchant) {
+        console.log('[MERCHANT_LOGIN] ❌ Merchant data not found:', merchantError);
+        await supabase.auth.signOut();
+        throw new Error('Merchant account not found. Please contact administrator.');
+      }
+      
+      console.log('[MERCHANT_LOGIN] ✅ Merchant data found:', merchant.business_name);
+      
+      // Step 5: Check merchant status
+      if (merchant.status !== 'active') {
+        console.log('[MERCHANT_LOGIN] ❌ Merchant account not active:', merchant.status);
+        await supabase.auth.signOut();
+        throw new Error(`Account is ${merchant.status}. Please contact administrator.`);
+      }
+      
+      console.log('[MERCHANT_LOGIN] ✅ All checks passed, creating login session...');
+      
+      // Step 6: Create login session data
       const loginData = {
-        token,
         user: {
           id: merchant.id,
+          profileId: profile.id,
           businessName: merchant.business_name,
-          email: merchant.email,
+          email: authData.user.email,
+          fullName: profile.full_name,
           uen: merchant.uen,
           mobile: merchant.mobile,
+          address: merchant.address,
           status: merchant.status,
           subscriptionPlan: merchant.subscription_plan,
-          address: merchant.address
+          subscriptionStartsAt: merchant.subscription_starts_at,
+          subscriptionExpiresAt: merchant.subscription_expires_at,
+          monthlyRevenue: merchant.monthly_revenue,
+          subscriptionLink: merchant.subscription_link,
+          createdAt: merchant.created_at,
+          updatedAt: merchant.updated_at
         },
-        userType: 'merchant'
+        userType: 'merchant',
+        authUser: authData.user,
+        session: authData.session
       };
 
-      // Store token in localStorage
-      localStorage.setItem('auth_token', loginData.token);
-      localStorage.setItem('user_data', JSON.stringify(loginData.user));
-
-      console.log('[MERCHANT_LOGIN] Login data stored, calling onLoginSuccess');
+      // Store login data
+      localStorage.setItem('merchant_data', JSON.stringify(loginData.user));
+      localStorage.setItem('user_type', 'merchant');
+      
+      console.log('[MERCHANT_LOGIN] ✅ Login successful for:', merchant.business_name);
+      console.log('[MERCHANT_LOGIN] Session data stored, calling onLoginSuccess');
+      console.log('=== MERCHANT LOGIN END (SUCCESS) ===');
+      
       onLoginSuccess();
+      
     } catch (error) {
+      console.log('[MERCHANT_LOGIN] ❌ Login failed:');
+      console.error('[MERCHANT_LOGIN] Error details:', error);
+      console.log('=== MERCHANT LOGIN END (ERROR) ===');
+      
+      // Make sure to sign out on any error
+      try {
+        await supabase.auth.signOut();
+      } catch (signOutError) {
+        console.warn('[MERCHANT_LOGIN] Error signing out:', signOutError);
+      }
+      
       setError(error instanceof Error ? error.message : 'Login failed');
     } finally {
       setIsLoading(false);

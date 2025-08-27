@@ -1,39 +1,35 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { Eye, EyeOff, Loader2 } from 'lucide-react';
-import { AdminUsersDB } from '../../lib/admin-database';
+import React, { useState } from "react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { AdminUsersDB } from "../../lib/admin-database";
 
 interface AdminLoginFormProps {
   onLoginSuccess?: () => void;
 }
 
 export function AdminLoginForm({ onLoginSuccess }: AdminLoginFormProps) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    setError('');
+    setError("");
 
     try {
-      console.log('[ADMIN_LOGIN] Attempting login with:', email);
-      console.log('[ADMIN_LOGIN] Environment:', window.location.hostname);
-      
-      // Use mock authentication for demo
+      console.log("[ADMIN_LOGIN] Attempting login with Supabase Auth:", email);
+
+      // Use Supabase authentication instead of localStorage
       const result = await AdminUsersDB.authenticate(email, password);
-      
+
+      console.log({ result });
       if (result.success && result.user) {
-        // Store mock token and user data
-        localStorage.setItem('admin_token', result.token || 'mock-admin-token');
-        localStorage.setItem('admin_data', JSON.stringify(result.user));
-        
-        console.log('[ADMIN_LOGIN] Login successful, stored token and data');
-        
+        console.log("[ADMIN_LOGIN] Admin login successful:", result.user.id);
+
         // Call success callback or reload page
         if (onLoginSuccess) {
           onLoginSuccess();
@@ -41,12 +37,12 @@ export function AdminLoginForm({ onLoginSuccess }: AdminLoginFormProps) {
           window.location.reload();
         }
       } else {
-        console.log('[ADMIN_LOGIN] Authentication failed:', result.error);
-        throw new Error(result.error || 'Authentication failed');
+        console.log("[ADMIN_LOGIN] Authentication failed:", result.error);
+        throw new Error(result.error || "Authentication failed");
       }
     } catch (error) {
-      console.error('[ADMIN_LOGIN] Login error:', error);
-      setError(error instanceof Error ? error.message : 'Login failed');
+      console.error("[ADMIN_LOGIN] Login error:", error);
+      setError(error instanceof Error ? error.message : "Login failed");
     } finally {
       setIsLoading(false);
     }
@@ -61,7 +57,10 @@ export function AdminLoginForm({ onLoginSuccess }: AdminLoginFormProps) {
       )}
 
       <div>
-        <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+        <label
+          htmlFor="email"
+          className="block text-sm font-medium text-gray-700"
+        >
           Admin Email
         </label>
         <div className="mt-1">
@@ -80,14 +79,17 @@ export function AdminLoginForm({ onLoginSuccess }: AdminLoginFormProps) {
       </div>
 
       <div>
-        <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+        <label
+          htmlFor="password"
+          className="block text-sm font-medium text-gray-700"
+        >
           Password
         </label>
         <div className="mt-1 relative">
           <input
             id="password"
             name="password"
-            type={showPassword ? 'text' : 'password'}
+            type={showPassword ? "text" : "password"}
             autoComplete="current-password"
             required
             value={password}
@@ -121,7 +123,7 @@ export function AdminLoginForm({ onLoginSuccess }: AdminLoginFormProps) {
               Signing in...
             </>
           ) : (
-            'Sign in as Admin'
+            "Sign in as Admin"
           )}
         </button>
       </div>

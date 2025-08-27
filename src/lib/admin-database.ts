@@ -3,15 +3,20 @@
  * Handles merchants, admin users, CMS content, and system settings
  */
 
-import { supabase } from './supabase';
-import { getSupabaseClient } from './supabase';
-import { signToken } from './auth';
+import {
+  supabase,
+  supabaseAdmin,
+  authHelpers,
+  getSupabaseClient,
+} from "./supabase";
+import { signToken } from "./auth";
+import type { AuthUser, Profile } from "../../types";
 
 // Custom error class for table not found scenarios
 export class SupabaseTableNotFoundError extends Error {
   constructor(tableName: string) {
     super(`Table '${tableName}' not found in Supabase schema`);
-    this.name = 'SupabaseTableNotFoundError';
+    this.name = "SupabaseTableNotFoundError";
   }
 }
 
@@ -19,7 +24,7 @@ export class SupabaseTableNotFoundError extends Error {
 export interface AdminUser {
   id: string;
   email: string;
-  role: 'super_admin' | 'admin' | 'support';
+  role: "super_admin" | "admin" | "support";
   firstName?: string;
   lastName?: string;
   active: boolean;
@@ -37,11 +42,11 @@ export interface Merchant {
   uen?: string;
   mobile?: string;
   address?: string;
-  status: 'active' | 'suspended' | 'pending' | 'expired';
-  subscriptionPlan: 'basic' | 'professional' | 'enterprise';
+  status: "active" | "suspended" | "pending" | "expired";
+  subscriptionPlan: "basic" | "professional" | "enterprise";
   subscriptionStartsAt: string;
   subscriptionExpiresAt: string;
-  paymentMethod: 'uen' | 'mobile';
+  paymentMethod: "uen" | "mobile";
   settings: Record<string, any>;
   monthlyRevenue?: number;
   subscriptionLink?: string;
@@ -75,157 +80,258 @@ export interface SystemSetting {
 
 // Set admin context for RLS
 async function setAdminContext(adminId: string) {
-  const { error } = await supabase.rpc('set_config', {
-    parameter: 'app.current_admin_id',
-    value: adminId
+  const { error } = await supabase.rpc("set_config", {
+    parameter: "app.current_admin_id",
+    value: adminId,
   });
-  
+
   if (error) {
-    console.warn('Could not set admin context:', error);
+    console.warn("Could not set admin context:", error);
   }
 }
 
 // Admin Users Database API
 export const AdminUsersDB = {
-  async authenticate(email: string, password: string): Promise<AdminUser | null> {
+  async authenticate(
+    email: string,
+    password: string
+  ): Promise<{
+    success: boolean;
+    user?: AuthUser;
+    error?: string;
+    token?: string;
+  }> {
     try {
-      // In production, this would verify password hash
-      // For demo, we'll use simple comparison
-      if (email === 'test@admin.com' && password === '12345678') {
-        // Return demo admin user without database query
-        const demoAdminId = '00000000-0000-0000-0000-000000000001';
-        const now = new Date().toISOString();
-        
-        // Generate a valid JWT token for the demo admin user
-        const token = await signToken({
-          userId: demoAdminId,
-          userType: 'admin',
-          email: email
-        });
+      console.log("[ADMIN_AUTH] Authenticating with Supabase:", email);
 
+      // Use Supabase authentication
+      const { user, error } = await authHelpers.signIn(email, password);
+
+      console.log('[ADMIN_AUTH] Sign in result:', { user, error });
+      if (error || !user) {
+        console.log("[ADMIN_AUTH] Authentication failed:", error);
         return {
-          success: true,
-          user: {
-          id: demoAdminId,
-          email: email,
-          role: 'super_admin',
-          firstName: 'Demo',
-          lastName: 'Admin',
-          active: true,
-          lastLoginAt: now,
-          createdAt: now,
-          updatedAt: now
-          },
-          token: token
+          success: false,
+          error: error || "Authentication failed",
         };
       }
-      
+
+      // If no profile, try to create one or fetch it with admin client
+      if (!user.profile) {
+        console.log('[ADMIN_AUTH] No profile found, attempting to fetch with admin client...');
+        
+        // Try to get profile with admin client (bypasses RLS)
+        const { data: profileData, error: profileError } = await supabaseAdmin
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+          
+        console.log('[ADMIN_AUTH] Admin client profile fetch:', { profileData, profileError });
+        
+        if (profileData) {
+          // Add profile to user object
+          user.profile = {
+            id: profileData.id,
+            full_name: profileData.full_name,
+            role: profileData.role,
+            created_at: profileData.created_at,
+            updated_at: profileData.updated_at
+          };
+          console.log('[ADMIN_AUTH] Profile loaded with admin client:', user.profile);
+        } else if (email === 'admin@mail.com') {
+          // For the main admin user, create profile if it doesn't exist
+          console.log('[ADMIN_AUTH] Creating admin profile...');
+          const { data: createdProfile, error: createError } = await supabaseAdmin
+            .from('profiles')
+            .insert({
+              id: user.id,
+              full_name: 'System Administrator',
+              role: 'admin'
+            })
+            .select()
+            .single();
+            
+          if (createdProfile && !createError) {
+            user.profile = {
+              id: createdProfile.id,
+              full_name: createdProfile.full_name,
+              role: createdProfile.role,
+              created_at: createdProfile.created_at,
+              updated_at: createdProfile.updated_at
+            };
+            console.log('[ADMIN_AUTH] Admin profile created:', user.profile);
+          }
+        }
+      }
+
+      // Check if user is admin
+      if (!user.profile || user.profile.role !== "admin") {
+        console.log("[ADMIN_AUTH] User is not an admin:", user.profile?.role);
+        await authHelpers.signOut(); // Sign out non-admin users
+        return {
+          success: false,
+          error: "Access denied. Admin role required.",
+        };
+      }
+
+      console.log("[ADMIN_AUTH] Admin authentication successful:", user.id);
+
+      // Get session token
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token || "";
+
       return {
-        success: false,
-        error: 'Invalid email or password'
+        success: true,
+        user: user,
+        token: token,
       };
     } catch (error) {
-      console.error('Admin authentication failed:', error);
+      console.error("[ADMIN_AUTH] Authentication error:", error);
       return {
         success: false,
-        error: 'Authentication failed'
+        error: error instanceof Error ? error.message : "Authentication failed",
       };
     }
   },
 
-  async getAll(): Promise<AdminUser[]> {
-    const { data, error } = await supabase
-      .from('admin_users')
-      .select('*')
-      .order('created_at', { ascending: false });
+  // Get current authenticated admin user
+  async getCurrentUser(): Promise<AuthUser | null> {
+    try {
+      const user = await authHelpers.getCurrentUser();
 
-    if (error) {
-      console.error('Error fetching admin users:', error);
-      throw new Error('Failed to fetch admin users');
+      if (!user || !user.profile || user.profile.role !== "admin") {
+        return null;
+      }
+
+      return user;
+    } catch (error) {
+      console.error("[ADMIN_AUTH] Error getting current user:", error);
+      return null;
     }
-
-    return (data || []).map(user => ({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      firstName: user.first_name,
-      lastName: user.last_name,
-      active: true,
-      lastLoginAt: user.last_login_at,
-      createdAt: user.created_at,
-      updatedAt: user.updated_at
-    }));
   },
 
+  // Get all users with admin role from profiles table
+  async getAll(): Promise<AuthUser[]> {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select(
+          `
+          *,
+          auth_users:id (
+            email,
+            created_at
+          )
+        `
+        )
+        .eq("role", "admin")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Error fetching admin users:", error);
+        throw new Error("Failed to fetch admin users");
+      }
+
+      // Note: This is a simplified mapping since we're working with profiles
+      // In a real implementation, you might need to join with auth.users
+      return (data || []).map((profile) => ({
+        id: profile.id,
+        email: profile.auth_users?.email || "unknown@example.com",
+        profile: {
+          id: profile.id,
+          full_name: profile.full_name,
+          role: profile.role,
+          created_at: profile.created_at,
+          updated_at: profile.updated_at,
+        },
+      }));
+    } catch (error) {
+      console.error("Error fetching admin users:", error);
+      return [];
+    }
+  },
+
+  // Create new admin user (requires service role)
   async create(data: {
     email: string;
     password: string;
-    role: 'super_admin' | 'admin' | 'support';
-    firstName?: string;
-    lastName?: string;
-  }): Promise<AdminUser> {
-    // In production, hash the password properly
-    const { data: result, error } = await supabase
-      .from('admin_users')
-      .insert({
-        email: data.email,
-        password_hash: '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/RK.s5uOtO', // demo hash
-        role: data.role,
-        first_name: data.firstName,
-        last_name: data.lastName
-      })
-      .select()
-      .single();
+    fullName?: string;
+  }): Promise<AuthUser> {
+    try {
+      const result = await authHelpers.adminCreateUser(
+        data.email,
+        data.password,
+        data.fullName || data.email.split("@")[0],
+        "admin"
+      );
 
-    if (error) {
-      console.error('Error creating admin user:', error);
-      throw new Error('Failed to create admin user');
+      if (result.error || !result.user) {
+        throw new Error(result.error || "Failed to create admin user");
+      }
+
+      return result.user;
+    } catch (error) {
+      console.error("Error creating admin user:", error);
+      throw new Error(
+        error instanceof Error ? error.message : "Failed to create admin user"
+      );
     }
+  },
 
-    return {
-      id: result.id,
-      email: result.email,
-      role: result.role,
-      firstName: result.first_name,
-      lastName: result.last_name,
-      active: result.active,
-      lastLoginAt: result.last_login_at,
-      createdAt: result.created_at,
-      updatedAt: result.updated_at
-    };
-  }
+  // Update admin profile
+  async updateProfile(
+    userId: string,
+    updates: Partial<Omit<Profile, "id" | "created_at" | "updated_at">>
+  ): Promise<Profile | null> {
+    try {
+      return await authHelpers.updateProfile(userId, updates);
+    } catch (error) {
+      console.error("Error updating admin profile:", error);
+      return null;
+    }
+  },
+
+  // Sign out current admin
+  async signOut(): Promise<void> {
+    await authHelpers.signOut();
+  },
 };
 
 // Merchants Database API
 export const MerchantsDB = {
   async getAll(authToken?: string): Promise<Merchant[]> {
-    console.log('[MERCHANTS_DB] Fetching from Supabase...');
-    const client = getSupabaseClient(authToken);
-    const { data, error } = await client
-      .from('merchants')
-      .select('*')
-      .order('created_at', { ascending: false });
+    console.log("[MERCHANTS_DB] Fetching from Supabase...");
+
+    // Use admin client for admin operations
+    const { data, error } = await supabaseAdmin
+      .from("merchants")
+      .select("*")
+      .order("created_at", { ascending: false });
 
     if (error) {
       throw new Error(`Failed to fetch merchants: ${error.message}`);
     }
 
-    return (data || []).map(merchant => ({
+    return (data || []).map((merchant) => ({
       id: merchant.id,
       businessName: merchant.business_name,
       email: merchant.email,
-      uen: merchant.uen,
-      mobile: merchant.mobile,
-      address: merchant.address,
-      status: merchant.status,
-      subscriptionPlan: merchant.subscription_plan,
-      subscriptionStartsAt: merchant.subscription_starts_at,
-      subscriptionExpiresAt: merchant.subscription_expires_at,
-      paymentMethod: merchant.payment_method,
-      settings: merchant.settings || {},
-      subscriptionLink: merchant.subscription_link,
-      createdAt: merchant.created_at,
-      updatedAt: merchant.updated_at
+      uen: merchant.uen || undefined,
+      mobile: merchant.mobile || undefined,
+      address: merchant.address || undefined,
+      status: (merchant.status as "active" | "suspended" | "pending" | "expired") || "active",
+      subscriptionPlan: (merchant.subscription_plan as "basic" | "professional" | "enterprise") || "basic",
+      subscriptionStartsAt: merchant.subscription_starts_at || "",
+      subscriptionExpiresAt: merchant.subscription_expires_at || "",
+      paymentMethod: (merchant.payment_method as "uen" | "mobile") || "uen",
+      settings: (merchant.settings as Record<string, any>) || {},
+      monthlyRevenue: merchant.monthly_revenue || 0,
+      subscriptionLink: merchant.subscription_link || "",
+      createdAt: merchant.created_at || "",
+      updatedAt: merchant.updated_at || "",
     }));
   },
 
@@ -236,117 +342,361 @@ export const MerchantsDB = {
     uen?: string;
     mobile?: string;
     address?: string;
-    subscriptionPlan?: 'basic' | 'professional' | 'enterprise';
-  }): Promise<Merchant> {
-    console.log('[MERCHANTS_DB] Creating merchant with data:', data);
-    
-    const passwordHash = data.password;
-    
-    const { data: result, error } = await supabase
-      .from('merchants')
-      .insert({
-        business_name: data.businessName,
-        email: data.email,
-        password_hash: passwordHash,
-        uen: data.uen,
-        mobile: data.mobile,
-        address: data.address,
-        subscription_plan: data.subscriptionPlan || 'basic',
-        subscription_starts_at: new Date().toISOString(),
-        subscription_expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
-      })
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to create merchant: ${error.message}`);
-    }
-
-    return {
-      id: result.id,
-      businessName: result.business_name,
-      email: result.email,
-      uen: result.uen,
-      mobile: result.mobile,
-      address: result.address,
-      status: result.status,
-      subscriptionPlan: result.subscription_plan,
-      subscriptionStartsAt: result.subscription_starts_at,
-      subscriptionExpiresAt: result.subscription_expires_at,
-      paymentMethod: result.payment_method || (data.uen ? 'uen' : 'mobile'),
-      settings: result.settings || {},
-      createdAt: result.created_at,
-      updatedAt: result.updated_at
-    };
-  },
-
-  async update(id: string, data: {
-    businessName?: string;
-    email?: string;
-    uen?: string;
-    mobile?: string;
-    address?: string;
-    subscriptionPlan?: 'basic' | 'professional' | 'enterprise';
+    subscriptionPlan?: "basic" | "professional" | "enterprise";
     monthlyRevenue?: number;
     subscriptionLink?: string;
   }): Promise<Merchant> {
-    console.log('[MERCHANTS_DB] Updating merchant:', id, 'with data:', data);
-    
-    const updateData: any = {
-      updated_at: new Date().toISOString()
-    };
+    console.log('=== MERCHANTS_DB CREATE FUNCTION START ===');
+    console.log("[MERCHANTS_DB] Function called at:", new Date().toISOString());
+    console.log("[MERCHANTS_DB] Input data received:", data);
+    console.log("[MERCHANTS_DB] Data types:", {
+      businessName: typeof data.businessName,
+      email: typeof data.email, 
+      password: typeof data.password,
+      monthlyRevenue: typeof data.monthlyRevenue
+    });
 
-    if (data.businessName !== undefined) updateData.business_name = data.businessName;
-    if (data.email !== undefined) updateData.email = data.email;
-    if (data.uen !== undefined) updateData.uen = data.uen;
-    if (data.mobile !== undefined) updateData.mobile = data.mobile;
-    if (data.address !== undefined) updateData.address = data.address;
-    if (data.subscriptionPlan !== undefined) updateData.subscription_plan = data.subscriptionPlan;
-    if (data.monthlyRevenue !== undefined) updateData.monthly_revenue = data.monthlyRevenue;
-    if (data.subscriptionLink !== undefined) updateData.subscription_link = data.subscriptionLink;
-
-    const { data: result, error } = await supabase
-      .from('merchants')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to update merchant: ${error.message}`);
+    // Test connectivity and service role key first
+    console.log("[MERCHANTS_DB] Testing Supabase Admin connectivity...");
+    try {
+      const testStartTime = Date.now();
+      const { data: testData, error: testError } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .limit(1);
+      const testTime = Date.now() - testStartTime;
+      
+      console.log(`[MERCHANTS_DB] Connectivity test completed in ${testTime}ms`);
+      console.log('[MERCHANTS_DB] Test result:', { testData, testError });
+      
+      if (testError) {
+        console.log('[MERCHANTS_DB] ❌ CONNECTIVITY TEST FAILED:');
+        console.log('[MERCHANTS_DB] This suggests service role key or database issue');
+        console.log('[MERCHANTS_DB] Test error:', testError);
+      } else {
+        console.log('[MERCHANTS_DB] ✅ Connectivity test passed');
+      }
+    } catch (connectError) {
+      console.log('[MERCHANTS_DB] ❌ CONNECTIVITY EXCEPTION:');
+      console.error('[MERCHANTS_DB] Connection exception:', connectError);
     }
 
-    const updatedMerchant = {
-      id: result.id,
-      businessName: result.business_name,
-      email: result.email,
-      uen: result.uen,
-      mobile: result.mobile,
-      address: result.address,
-      status: result.status,
-      subscriptionPlan: result.subscription_plan,
-      subscriptionStartsAt: result.subscription_starts_at,
-      subscriptionExpiresAt: result.subscription_expires_at,
-      paymentMethod: result.payment_method || (result.uen ? 'uen' : 'mobile'),
-      settings: result.settings || {},
-      monthlyRevenue: result.monthly_revenue,
-      subscriptionLink: result.subscription_link,
-      createdAt: result.created_at,
-      updatedAt: result.updated_at
+    let userResult;
+    try {
+      console.log("[MERCHANTS_DB] About to create user account for merchant...");
+      console.log("[MERCHANTS_DB] Calling authHelpers.adminCreateUser with:", {
+        email: data.email,
+        businessName: data.businessName,
+        role: "user"
+      });
+      
+      const startTime = Date.now();
+      userResult = await authHelpers.adminCreateUser(
+        data.email,
+        data.password,
+        data.businessName,
+        "user" // Merchants have 'user' role
+      );
+      const userCreationTime = Date.now() - startTime;
+      
+      console.log(`[MERCHANTS_DB] User creation completed in ${userCreationTime}ms`);
+      console.log("[MERCHANTS_DB] User creation result:", userResult);
+
+      if (userResult.error || !userResult.user) {
+        console.log("[MERCHANTS_DB] ❌ USER CREATION FAILED:");
+        console.log("[MERCHANTS_DB] Error:", userResult.error);
+        console.log("[MERCHANTS_DB] User:", userResult.user);
+        throw new Error(`Failed to create merchant user: ${userResult.error}`);
+      }
+
+      console.log("[MERCHANTS_DB] ✅ User created successfully!");
+      console.log('[MERCHANTS_DB] Created user ID:', userResult.user.id);
+      console.log('[MERCHANTS_DB] User email:', userResult.user.email);
+      console.log('[MERCHANTS_DB] User profile:', userResult.user.profile);
+      
+      console.log('[MERCHANTS_DB] Now proceeding to create merchant record...');
+    } catch (userError) {
+      console.log("[MERCHANTS_DB] ❌ EXCEPTION during user creation:");
+      console.error("[MERCHANTS_DB] Exception details:", userError);
+      console.log('=== MERCHANTS_DB CREATE FUNCTION END (ERROR) ===');
+      throw userError;
+    }
+
+    try {
+      console.log("[MERCHANTS_DB] Preparing merchant record data...");
+      // Create merchant record with profile reference
+      const merchantData = {
+        profile_id: userResult.user.id,
+      business_name: data.businessName,
+      email: data.email,
+      password_hash: data.password, // Store plaintext for demo purposes
+      uen: data.uen || null,
+      mobile: data.mobile || null,
+      address: data.address || null,
+      subscription_plan: data.subscriptionPlan || "basic",
+      subscription_link: data.subscriptionLink || null,
+      monthly_revenue: data.monthlyRevenue || null,
+      subscription_starts_at: new Date().toISOString(),
+      subscription_expires_at: new Date(
+        Date.now() + 365 * 24 * 60 * 60 * 1000
+      ).toISOString(),
+      status: "active" as const,
+      payment_method: data.uen ? ("uen" as const) : (data.mobile ? ("mobile" as const) : null),
+      settings: {}
     };
-    
-    return updatedMerchant;
+
+      console.log('[MERCHANTS_DB] Final merchant data to insert:', merchantData);
+      console.log('[MERCHANTS_DB] Attempting database insert...');
+
+      const insertStartTime = Date.now();
+      const { data: result, error } = await supabaseAdmin
+        .from("merchants")
+        .insert(merchantData)
+        .select()
+        .single();
+      const insertTime = Date.now() - insertStartTime;
+
+      console.log(`[MERCHANTS_DB] Database insert completed in ${insertTime}ms`);
+      console.log('[MERCHANTS_DB] Insert result:', { result, error });
+
+      if (error) {
+        console.log('[MERCHANTS_DB] ❌ MERCHANT CREATION FAILED:');
+        console.error('[MERCHANTS_DB] Database error:', error);
+        console.log('[MERCHANTS_DB] Error code:', error.code);
+        console.log('[MERCHANTS_DB] Error message:', error.message);
+        console.log('[MERCHANTS_DB] Error details:', error.details);
+        
+        // If merchant creation fails, cleanup the user account
+        try {
+          console.log('[MERCHANTS_DB] Attempting to cleanup user account:', userResult.user.id);
+          await supabaseAdmin.auth.admin.deleteUser(userResult.user.id);
+          console.log('[MERCHANTS_DB] User account cleaned up successfully');
+        } catch (cleanupError) {
+          console.error(
+            "[MERCHANTS_DB] Failed to cleanup user after merchant creation failure:",
+            cleanupError
+          );
+        }
+        throw new Error(`Failed to create merchant: ${error.message}`);
+      }
+
+      if (!result) {
+        console.log('[MERCHANTS_DB] ❌ No result returned from merchant creation');
+        throw new Error('Failed to create merchant: No result returned');
+      }
+
+      console.log('[MERCHANTS_DB] ✅ Merchant record created successfully:', result);
+      console.log('[MERCHANTS_DB] Building return object...');
+
+      const merchantResponse = {
+        id: result.id,
+        businessName: result.business_name,
+        email: result.email,
+        uen: result.uen || undefined,
+        mobile: result.mobile || undefined,
+        address: result.address || undefined,
+        status: (result.status as "active" | "suspended" | "pending" | "expired") || "active",
+        subscriptionPlan: (result.subscription_plan as "basic" | "professional" | "enterprise") || "basic",
+        subscriptionStartsAt: result.subscription_starts_at || "",
+        subscriptionExpiresAt: result.subscription_expires_at || "",
+        paymentMethod: (result.payment_method as "uen" | "mobile") || (data.uen ? "uen" : "mobile"),
+        settings: (result.settings as Record<string, any>) || {},
+        monthlyRevenue: result.monthly_revenue || 0,
+        subscriptionLink: result.subscription_link || "",
+        createdAt: result.created_at || "",
+        updatedAt: result.updated_at || "",
+      };
+
+      console.log('[MERCHANTS_DB] Final merchant response:', merchantResponse);
+      console.log('=== MERCHANTS_DB CREATE FUNCTION END (SUCCESS) ===');
+      return merchantResponse;
+
+    } catch (merchantError) {
+      console.log("[MERCHANTS_DB] ❌ EXCEPTION during merchant creation:");
+      console.error("[MERCHANTS_DB] Merchant creation exception:", merchantError);
+      console.log('=== MERCHANTS_DB CREATE FUNCTION END (ERROR) ===');
+      throw merchantError;
+    }
   },
 
-  async updateStatus(id: string, status: 'active' | 'suspended' | 'pending' | 'expired'): Promise<Merchant | null> {
-    console.log('[MERCHANTS_DB] Updating status in Supabase:', id, status);
-    const { data: result, error } = await supabase
-      .from('merchants')
-      .update({ 
+  async update(
+    id: string,
+    data: {
+      businessName?: string;
+      email?: string;
+      uen?: string;
+      mobile?: string;
+      address?: string;
+      subscriptionPlan?: "basic" | "professional" | "enterprise";
+      monthlyRevenue?: number;
+      subscriptionLink?: string;
+    }
+  ): Promise<Merchant> {
+    console.log('=== MERCHANTS_DB UPDATE START ===');
+    console.log("[MERCHANTS_DB] Function called at:", new Date().toISOString());
+    console.log("[MERCHANTS_DB] Updating merchant ID:", id);
+    console.log("[MERCHANTS_DB] Input data:", data);
+    console.log("[MERCHANTS_DB] Data types:", Object.keys(data).map(key => `${key}: ${typeof data[key as keyof typeof data]}`));
+
+    try {
+      const updateData: any = {
+        updated_at: new Date().toISOString(),
+      };
+
+      if (data.businessName !== undefined) {
+        updateData.business_name = data.businessName;
+        console.log("[MERCHANTS_DB] Setting business_name:", data.businessName);
+      }
+      if (data.email !== undefined) {
+        updateData.email = data.email;
+        console.log("[MERCHANTS_DB] Setting email:", data.email);
+      }
+      if (data.uen !== undefined) {
+        updateData.uen = data.uen;
+        console.log("[MERCHANTS_DB] Setting uen:", data.uen);
+      }
+      if (data.mobile !== undefined) {
+        updateData.mobile = data.mobile;
+        console.log("[MERCHANTS_DB] Setting mobile:", data.mobile);
+      }
+      if (data.address !== undefined) {
+        updateData.address = data.address;
+        console.log("[MERCHANTS_DB] Setting address:", data.address);
+      }
+      if (data.subscriptionPlan !== undefined) {
+        updateData.subscription_plan = data.subscriptionPlan;
+        console.log("[MERCHANTS_DB] Setting subscription_plan:", data.subscriptionPlan);
+      }
+      if (data.monthlyRevenue !== undefined) {
+        updateData.monthly_revenue = data.monthlyRevenue;
+        console.log("[MERCHANTS_DB] Setting monthly_revenue:", data.monthlyRevenue);
+      }
+      if (data.subscriptionLink !== undefined) {
+        updateData.subscription_link = data.subscriptionLink;
+        console.log("[MERCHANTS_DB] Setting subscription_link:", data.subscriptionLink);
+      }
+
+      console.log("[MERCHANTS_DB] Final updateData object:", updateData);
+      console.log("[MERCHANTS_DB] About to call supabaseAdmin.from('merchants').update()...");
+
+      // Debug supabaseAdmin client
+      console.log("[MERCHANTS_DB] Checking supabaseAdmin client:");
+      console.log("[MERCHANTS_DB] supabaseAdmin exists:", !!supabaseAdmin);
+      console.log("[MERCHANTS_DB] supabaseAdmin.supabaseUrl:", supabaseAdmin.supabaseUrl);
+      console.log("[MERCHANTS_DB] supabaseAdmin.supabaseKey length:", supabaseAdmin.supabaseKey?.length);
+      
+      // Debug environment variables
+      const serviceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      console.log("[MERCHANTS_DB] Environment check:");
+      console.log("[MERCHANTS_DB] VITE_SUPABASE_URL exists:", !!supabaseUrl);
+      console.log("[MERCHANTS_DB] VITE_SUPABASE_URL:", supabaseUrl);
+      console.log("[MERCHANTS_DB] VITE_SUPABASE_SERVICE_ROLE_KEY exists:", !!serviceRoleKey);
+      console.log("[MERCHANTS_DB] VITE_SUPABASE_SERVICE_ROLE_KEY length:", serviceRoleKey?.length);
+      console.log("[MERCHANTS_DB] VITE_SUPABASE_SERVICE_ROLE_KEY preview:", serviceRoleKey?.substring(0, 20) + '...');
+      
+      // Test simple query first
+      console.log("[MERCHANTS_DB] Testing simple select query first...");
+      try {
+        const testQuery = await supabaseAdmin
+          .from("merchants")
+          .select("id, business_name")
+          .eq("id", id)
+          .single();
+        console.log("[MERCHANTS_DB] Test query result:", testQuery);
+      } catch (testError) {
+        console.log("[MERCHANTS_DB] Test query failed:", testError);
+      }
+
+      console.log("[MERCHANTS_DB] Now attempting the actual update...");
+      const updateStartTime = Date.now();
+      
+      const updateQuery = supabaseAdmin
+        .from("merchants")
+        .update(updateData)
+        .eq("id", id)
+        .select()
+        .single();
+        
+      console.log("[MERCHANTS_DB] Update query object created, now executing...");
+      
+      const { data: result, error } = await updateQuery;
+      const updateEndTime = Date.now();
+
+      console.log(`[MERCHANTS_DB] Supabase update completed in ${updateEndTime - updateStartTime}ms`);
+      console.log("[MERCHANTS_DB] Supabase result:", result);
+      console.log("[MERCHANTS_DB] Supabase error:", error);
+
+      if (error) {
+        console.log("[MERCHANTS_DB] ❌ Database update failed:");
+        console.log("[MERCHANTS_DB] Error code:", error.code);
+        console.log("[MERCHANTS_DB] Error message:", error.message);
+        console.log("[MERCHANTS_DB] Error details:", error.details);
+        console.log("[MERCHANTS_DB] Error hint:", error.hint);
+        throw new Error(`Failed to update merchant: ${error.message}`);
+      }
+
+      if (!result) {
+        console.log("[MERCHANTS_DB] ❌ No result returned from update operation");
+        throw new Error("No merchant found with the provided ID");
+      }
+
+      console.log("[MERCHANTS_DB] ✅ Database update successful!");
+      console.log("[MERCHANTS_DB] Building response object...");
+
+      const updatedMerchant = {
+        id: result.id,
+        businessName: result.business_name,
+        email: result.email,
+        uen: result.uen || undefined,
+        mobile: result.mobile || undefined,
+        address: result.address || undefined,
+        status: (result.status as "active" | "suspended" | "pending" | "expired") || "active",
+        subscriptionPlan: (result.subscription_plan as "basic" | "professional" | "enterprise") || "basic",
+        subscriptionStartsAt: result.subscription_starts_at || "",
+        subscriptionExpiresAt: result.subscription_expires_at || "",
+        paymentMethod:
+          (result.payment_method as "uen" | "mobile") ||
+          (result.uen ? "uen" : "mobile"),
+        settings: (result.settings as Record<string, any>) || {},
+        monthlyRevenue: result.monthly_revenue || 0,
+        subscriptionLink: result.subscription_link || "",
+        createdAt: result.created_at || "",
+        updatedAt: result.updated_at || "",
+      };
+
+      console.log("[MERCHANTS_DB] Final response object:", updatedMerchant);
+      console.log('=== MERCHANTS_DB UPDATE END (SUCCESS) ===');
+      return updatedMerchant;
+
+    } catch (error) {
+      console.log("[MERCHANTS_DB] ❌ EXCEPTION in update function:");
+      console.error("[MERCHANTS_DB] Exception details:", error);
+      console.log("[MERCHANTS_DB] Exception type:", typeof error);
+      console.log("[MERCHANTS_DB] Exception constructor:", error?.constructor?.name);
+      
+      if (error instanceof Error) {
+        console.log("[MERCHANTS_DB] Exception message:", error.message);
+        console.log("[MERCHANTS_DB] Exception stack:", error.stack);
+      }
+      
+      console.log('=== MERCHANTS_DB UPDATE END (ERROR) ===');
+      throw error;
+    }
+  },
+
+  async updateStatus(
+    id: string,
+    status: "active" | "suspended" | "pending"
+  ): Promise<Merchant | null> {
+    console.log("[MERCHANTS_DB] Updating status in Supabase:", id, status);
+    const { data: result, error } = await supabaseAdmin
+      .from("merchants")
+      .update({
         status,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       })
-      .eq('id', id)
+      .eq("id", id)
       .select()
       .single();
 
@@ -358,411 +708,191 @@ export const MerchantsDB = {
       id: result.id,
       businessName: result.business_name,
       email: result.email,
-      uen: result.uen,
-      mobile: result.mobile,
-      address: result.address,
-      status: result.status,
-      subscriptionPlan: result.subscription_plan,
-      subscriptionStartsAt: result.subscription_starts_at,
-      subscriptionExpiresAt: result.subscription_expires_at,
-      paymentMethod: result.payment_method,
-      settings: result.settings || {},
-      createdAt: result.created_at,
-      updatedAt: result.updated_at
+      uen: result.uen || undefined,
+      mobile: result.mobile || undefined,
+      address: result.address || undefined,
+      status: (result.status as "active" | "suspended" | "pending" | "expired") || "active",
+      subscriptionPlan: (result.subscription_plan as "basic" | "professional" | "enterprise") || "basic",
+      subscriptionStartsAt: result.subscription_starts_at || "",
+      subscriptionExpiresAt: result.subscription_expires_at || "",
+      paymentMethod: (result.payment_method as "uen" | "mobile") || "uen",
+      settings: (result.settings as Record<string, any>) || {},
+      monthlyRevenue: result.monthly_revenue || 0,
+      subscriptionLink: result.subscription_link || "",
+      createdAt: result.created_at || "",
+      updatedAt: result.updated_at || "",
     };
   },
 
   async delete(id: string): Promise<boolean> {
-    console.log('[MERCHANTS_DB] Deleting from Supabase:', id);
-    const { error } = await supabase
-      .from('merchants')
+    console.log("[MERCHANTS_DB] Deleting from Supabase:", id);
+
+    // Get merchant to find profile_id before deleting
+    const { data: merchant, error: fetchError } = await supabaseAdmin
+      .from("merchants")
+      .select("profile_id")
+      .eq("id", id)
+      .single();
+
+    if (fetchError) {
+      throw new Error(
+        `Failed to fetch merchant for deletion: ${fetchError.message}`
+      );
+    }
+
+    // Delete merchant record
+    const { error } = await supabaseAdmin
+      .from("merchants")
       .delete()
-      .eq('id', id);
+      .eq("id", id);
 
     if (error) {
       throw new Error(`Failed to delete merchant: ${error.message}`);
     }
 
-    return true;
-  }
-};
-
-// LocalStorage fallback functions
-const MERCHANTS_STORAGE_KEY = 'paynowgo_merchants';
-
-export function getMerchantsFromLocalStorage(): Merchant[] {
-  try {
-    const stored = localStorage.getItem(MERCHANTS_STORAGE_KEY);
-    if (!stored) {
-      console.log('[MERCHANTS_DB] No merchants in localStorage, initializing with demo data');
-      // Initialize with demo merchant
-      const defaultMerchants: Merchant[] = [
-        {
-          id: '00000000-0000-0000-0000-000000000001',
-          businessName: 'Demo Restaurant Pte Ltd',
-          email: 'test@merchant.com',
-          password: '12345678', // Add password for demo merchant
-          uen: 'T05LL1103B',
-          mobile: '+6591234567',
-          address: '123 Orchard Road, Singapore 238874',
-          status: 'active',
-          subscriptionPlan: 'basic',
-          subscriptionStartsAt: new Date().toISOString(),
-          subscriptionExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-          paymentMethod: 'uen',
-          settings: {},
-          monthlyRevenue: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
-      ];
-      localStorage.setItem(MERCHANTS_STORAGE_KEY, JSON.stringify(defaultMerchants));
-      console.log('[MERCHANTS_DB] Demo merchants initialized in localStorage');
-      return defaultMerchants;
-    }
-    const merchants = JSON.parse(stored);
-    console.log('[MERCHANTS_DB] Loaded merchants from localStorage:', merchants.length);
-    return merchants;
-  } catch (error) {
-    console.error('Error reading merchants from localStorage:', error);
-    return [];
-  }
-}
-
-function createMerchantInLocalStorage(data: {
-  businessName: string;
-  email: string;
-  password: string;
-  uen?: string;
-  mobile?: string;
-  address?: string;
-  subscriptionPlan?: 'basic' | 'professional' | 'enterprise';
-  subscriptionLink?: string;
-}): Merchant {
-  console.log('[MERCHANTS_DB] Creating merchant in localStorage with data:', data);
-  const merchants = getMerchantsFromLocalStorage();
-  console.log('[MERCHANTS_DB] Current merchants in localStorage:', merchants.length);
-  
-  const newMerchant: Merchant = {
-    id: 'merchant-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
-    businessName: data.businessName,
-    email: data.email,
-    password: data.password,
-    uen: data.uen,
-    mobile: data.mobile,
-    address: data.address,
-    status: 'active',
-    subscriptionPlan: data.subscriptionPlan || 'basic',
-    subscriptionStartsAt: new Date().toISOString(),
-    subscriptionExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-    paymentMethod: data.uen ? 'uen' : 'mobile',
-    settings: {},
-    subscriptionLink: data.subscriptionLink,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-  
-  console.log('[MERCHANTS_DB] New merchant object created:', newMerchant);
-  const updatedMerchants = [newMerchant, ...merchants];
-  console.log('[MERCHANTS_DB] Updated merchants array length:', updatedMerchants.length);
-  
-  try {
-    localStorage.setItem(MERCHANTS_STORAGE_KEY, JSON.stringify(updatedMerchants));
-    console.log('[MERCHANTS_DB] Merchants saved to localStorage successfully');
-    
-    // Verify the save worked
-    const verification = localStorage.getItem(MERCHANTS_STORAGE_KEY);
-    const verifiedMerchants = verification ? JSON.parse(verification) : [];
-    console.log('[MERCHANTS_DB] Verification: localStorage now contains', verifiedMerchants.length, 'merchants');
-    
-    if (verifiedMerchants.length !== updatedMerchants.length) {
-      console.error('[MERCHANTS_DB] localStorage save verification failed!');
-      throw new Error('Failed to save to localStorage');
-    }
-  } catch (error) {
-    console.error('[MERCHANTS_DB] Error saving to localStorage:', error);
-    throw new Error('Failed to save merchant to localStorage');
-  }
-  
-  console.log('[MERCHANTS_DB] Merchants saved to localStorage');
-  
-  return newMerchant;
-}
-
-function updateMerchantInLocalStorage(id: string, data: {
-  businessName?: string;
-  email?: string;
-  uen?: string;
-  mobile?: string;
-  address?: string;
-  subscriptionPlan?: 'basic' | 'professional' | 'enterprise';
-  monthlyRevenue?: number;
-}): Merchant {
-  console.log('[MERCHANTS_DB] Updating merchant in localStorage:', id, 'with data:', data);
-  const merchants = getMerchantsFromLocalStorage();
-  const index = merchants.findIndex(m => m.id === id);
-  
-  if (index === -1) {
-    throw new Error('Merchant not found');
-  }
-  
-  const existingMerchant = merchants[index];
-  
-  // Handle null values properly - they should clear the field
-  const updatedMerchant: Merchant = {
-    ...existingMerchant,
-    businessName: data.businessName !== undefined ? data.businessName : existingMerchant.businessName,
-    email: data.email !== undefined ? data.email : existingMerchant.email,
-    uen: data.uen !== undefined ? (data.uen || undefined) : existingMerchant.uen,
-    mobile: data.mobile !== undefined ? (data.mobile || undefined) : existingMerchant.mobile,
-    address: data.address !== undefined ? (data.address || undefined) : existingMerchant.address,
-    subscriptionPlan: data.subscriptionPlan !== undefined ? data.subscriptionPlan : existingMerchant.subscriptionPlan,
-    monthlyRevenue: data.monthlyRevenue !== undefined ? data.monthlyRevenue : existingMerchant.monthlyRevenue,
-    subscriptionLink: data.subscriptionLink !== undefined ? (data.subscriptionLink || undefined) : existingMerchant.subscriptionLink,
-    paymentMethod: (() => {
-      const finalUen = data.uen !== undefined ? data.uen : existingMerchant.uen;
-      const finalMobile = data.mobile !== undefined ? data.mobile : existingMerchant.mobile;
-      return finalUen ? 'uen' : finalMobile ? 'mobile' : 'uen'; // Default to uen if neither
-    })(),
-    updatedAt: new Date().toISOString()
-  };
-  
-  console.log('[MERCHANTS_DB] Updated merchant object:', {
-    id: updatedMerchant.id,
-    businessName: updatedMerchant.businessName,
-    uen: updatedMerchant.uen,
-    mobile: updatedMerchant.mobile,
-    paymentMethod: updatedMerchant.paymentMethod
-  });
-  
-  merchants[index] = updatedMerchant;
-  
-  try {
-    localStorage.setItem(MERCHANTS_STORAGE_KEY, JSON.stringify(merchants));
-    console.log('[MERCHANTS_DB] Merchant updated in localStorage successfully');
-    
-    // Update the merchant's user data if they're currently logged in
-    const currentUserData = localStorage.getItem('user_data');
-    if (currentUserData) {
+    // Delete associated user account if profile_id exists
+    if (merchant?.profile_id) {
       try {
-        const currentUser = JSON.parse(currentUserData);
-        if (currentUser.id === id) {
-          const updatedUserData = {
-            ...currentUser,
-            businessName: updatedMerchant.businessName,
-            email: updatedMerchant.email,
-            uen: updatedMerchant.uen || undefined,
-            mobile: updatedMerchant.mobile || undefined,
-            address: updatedMerchant.address
-          };
-          
-          console.log('[MERCHANTS_DB] Updating user session with cleaned data:', {
-            businessName: updatedUserData.businessName,
-            uen: updatedUserData.uen,
-            mobile: updatedUserData.mobile
-          });
-          
-          localStorage.setItem('user_data', JSON.stringify(updatedUserData));
-          console.log('[MERCHANTS_DB] Updated current user session data');
-          
-          // Trigger a custom event to update the header without full page reload
-          window.dispatchEvent(new CustomEvent('merchantDataUpdated', { 
-            detail: updatedUserData 
-          }));
-          
-          console.log('[MERCHANTS_DB] Merchant session data updated, event dispatched');
-        }
-      } catch (error) {
-        console.warn('[MERCHANTS_DB] Could not update current user session:', error);
+        await supabaseAdmin.auth.admin.deleteUser(merchant.profile_id);
+        console.log(
+          "[MERCHANTS_DB] Deleted associated user account:",
+          merchant.profile_id
+        );
+      } catch (userDeleteError) {
+        console.error(
+          "[MERCHANTS_DB] Failed to delete user account:",
+          userDeleteError
+        );
+        // Don't fail the operation if user deletion fails
       }
     }
-  } catch (error) {
-    console.error('[MERCHANTS_DB] Error updating merchant in localStorage:', error);
-    throw new Error('Failed to update merchant in localStorage');
-  }
-  
-  return updatedMerchant;
-}
 
-function updateMerchantStatusInLocalStorage(id: string, status: 'active' | 'suspended' | 'pending' | 'expired'): Merchant | null {
-  const merchants = getMerchantsFromLocalStorage();
-  const index = merchants.findIndex(m => m.id === id);
-  
-  if (index === -1) return null;
-  
-  const updatedMerchant = {
-    ...merchants[index],
-    status,
-    updatedAt: new Date().toISOString()
-  };
-  
-  merchants[index] = updatedMerchant;
-  localStorage.setItem(MERCHANTS_STORAGE_KEY, JSON.stringify(merchants));
-  
-  return updatedMerchant;
-}
+    return true;
+  },
+};
 
-function deleteMerchantFromLocalStorage(id: string): boolean {
-  const merchants = getMerchantsFromLocalStorage();
-  const filtered = merchants.filter(m => m.id !== id);
-  
-  if (filtered.length === merchants.length) return false;
-  
-  localStorage.setItem(MERCHANTS_STORAGE_KEY, JSON.stringify(filtered));
-  return true;
-}
+// Legacy localStorage functions removed - using Supabase exclusively now
 
 // CMS Content Database API
 export const CMSDB = {
   async getContent(section: string): Promise<any> {
     try {
       const { data, error } = await supabase
-        .from('cms_content')
-        .select('content')
-        .eq('section', section)
-        .eq('active', true)
+        .from("cms_content")
+        .select("content")
+        .eq("section", section)
+        .eq("active", true)
         .single();
 
       if (error) {
-        if (error.code === 'PGRST116' || error.message?.includes('table') || error.message?.includes('schema cache')) {
-          console.warn('CMS table not found, using fallback storage');
+        if (
+          error.code === "PGRST116" ||
+          error.message?.includes("table") ||
+          error.message?.includes("schema cache")
+        ) {
+          console.warn("CMS table not found, using fallback storage");
           return null;
         }
-        console.warn('CMS content not found for section:', section);
+        console.warn("CMS content not found for section:", section);
         return null;
       }
 
       return data.content;
     } catch (error) {
-      console.warn('CMS database error, using fallback:', error);
+      console.warn("CMS database error, using fallback:", error);
       return null;
     }
   },
 
   async getAllContent(): Promise<Record<string, any>> {
     const { data, error } = await supabase
-      .from('cms_content')
-      .select('section, content')
-      .eq('active', true);
+      .from("cms_content")
+      .select("section, content")
+      .eq("active", true);
 
     if (error) {
-      if (error.code === 'PGRST205' || error.code === 'PGRST116' || error.message?.includes('table') || error.message?.includes('schema cache') || error.message?.includes('Could not find')) {
-        throw new SupabaseTableNotFoundError('cms_content');
+      if (
+        error.code === "PGRST205" ||
+        error.code === "PGRST116" ||
+        error.message?.includes("table") ||
+        error.message?.includes("schema cache") ||
+        error.message?.includes("Could not find")
+      ) {
+        throw new SupabaseTableNotFoundError("cms_content");
       }
-      console.warn('CMS content table error:', error);
+      console.warn("CMS content table error:", error);
       return {};
     }
 
     const content: Record<string, any> = {};
-    (data || []).forEach(item => {
-      content[item.section] = item.content;
+    (data || []).forEach((item) => {
+      if (item.section) {
+        content[item.section] = item.content;
+      }
     });
 
     return content;
   },
 
-  async saveContent(section: string, content: any, adminId?: string): Promise<void> {
+  async saveContent(
+    section: string,
+    content: any,
+    adminId?: string
+  ): Promise<void> {
     // Deactivate current version
     await supabase
-      .from('cms_content')
+      .from("cms_content")
       .update({ active: false })
-      .eq('section', section)
-      .eq('active', true);
+      .eq("section", section)
+      .eq("active", true);
 
     // Insert new version
-    const { error } = await supabase
-      .from('cms_content')
-      .insert({
-        section,
-        content,
-        created_by: adminId,
-        version: 1 // In production, increment version number
-      });
+    const { error } = await supabase.from("cms_content").insert({
+      section,
+      content,
+      created_by: adminId,
+      version: 1, // In production, increment version number
+    });
 
     if (error) {
-      if (error.code === 'PGRST205' || error.code === 'PGRST116' || error.message?.includes('table') || error.message?.includes('schema cache')) {
-        throw new SupabaseTableNotFoundError('cms_content');
+      if (
+        error.code === "PGRST205" ||
+        error.code === "PGRST116" ||
+        error.message?.includes("table") ||
+        error.message?.includes("schema cache")
+      ) {
+        throw new SupabaseTableNotFoundError("cms_content");
       }
-      console.error('Error saving CMS content:', error);
-      throw new Error('Failed to save CMS content');
+      console.error("Error saving CMS content:", error);
+      throw new Error("Failed to save CMS content");
     }
   },
 
-  async saveAllContent(allContent: Record<string, any>, adminId?: string): Promise<void> {
+  async saveAllContent(
+    allContent: Record<string, any>,
+    adminId?: string
+  ): Promise<void> {
     for (const [section, content] of Object.entries(allContent)) {
       await this.saveContent(section, content, adminId);
     }
-  }
+  },
 };
 
-// System Settings Database API
-export const SystemSettingsDB = {
-  async getAll(): Promise<SystemSetting[]> {
-    const { data, error } = await supabase
-      .from('system_settings')
-      .select('*')
-      .order('category', { ascending: true });
-
-    if (error) {
-      console.error('Error fetching system settings:', error);
-      throw new Error('Failed to fetch system settings');
-    }
-
-    return (data || []).map(setting => ({
-      id: setting.id,
-      key: setting.key,
-      value: setting.value,
-      description: setting.description,
-      category: setting.category,
-      updatedBy: setting.updated_by,
-      createdAt: setting.created_at,
-      updatedAt: setting.updated_at
-    }));
-  },
-
-  async get(key: string): Promise<any> {
-    const { data, error } = await supabase
-      .from('system_settings')
-      .select('value')
-      .eq('key', key)
-      .single();
-
-    if (error) {
-      console.warn('System setting not found:', key);
-      return null;
-    }
-
-    return data.value;
-  },
-
-  async set(key: string, value: any, adminId?: string): Promise<void> {
-    const { error } = await supabase
-      .from('system_settings')
-      .upsert({
-        key,
-        value,
-        updated_by: adminId,
-        updated_at: new Date().toISOString()
-      });
-
-    if (error) {
-      console.error('Error setting system setting:', error);
-      throw new Error('Failed to update system setting');
-    }
-  }
-};
+// SystemSettingsDB removed - not implemented in current schema
 
 // Migration helper for existing data
 export function migrateAdminData() {
-  console.log('[ADMIN_MIGRATION] Migration skipped - using localStorage as primary storage');
+  console.log(
+    "[ADMIN_MIGRATION] Migration skipped - using localStorage as primary storage"
+  );
   // Migration is disabled until database tables are properly set up
   // This prevents errors when CMS tables don't exist in Supabase
 }
 
 // Check if admin migration is needed
 export function needsAdminMigration(): boolean {
-  const migrated = localStorage.getItem('paynowgo_cms_migrated');
-  const hasLocalCMS = localStorage.getItem('paynowgo_cms_content');
-  
+  const migrated = localStorage.getItem("paynowgo_cms_migrated");
+  const hasLocalCMS = localStorage.getItem("paynowgo_cms_content");
+
   return !migrated && !!hasLocalCMS;
 }

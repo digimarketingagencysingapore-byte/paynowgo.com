@@ -1,5 +1,5 @@
 // /src/lib/database.ts
-import { getSupabaseClient, getTenantContext, isSupabaseConfigured } from './supabase.js';
+import { supabase } from './supabase';
 
 // Define interfaces that were missing
 export interface StoredCategory {
@@ -52,9 +52,9 @@ function saveToStorage<T>(key: string, data: T): void {
 
 // LocalStorage helper functions for categories
 function createCategoryInLocalStorage(data: { name: string; position?: number }): StoredCategory {
-  const categories = getFromStorage(STORAGE_KEYS.CATEGORIES, []);
+  const categories: StoredCategory[] = getFromStorage(STORAGE_KEYS.CATEGORIES, []);
   const newCategory: StoredCategory = {
-    id: 'cat-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+    id: 'cat-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
     tenantId: '00000000-0000-0000-0000-000000000001',
     name: data.name,
     position: data.position || 0,
@@ -68,7 +68,7 @@ function createCategoryInLocalStorage(data: { name: string; position?: number })
 }
 
 function updateCategoryInLocalStorage(id: string, data: Partial<{ name: string; position: number }>): StoredCategory | null {
-  const categories = getFromStorage(STORAGE_KEYS.CATEGORIES, []);
+  const categories: StoredCategory[] = getFromStorage(STORAGE_KEYS.CATEGORIES, []);
   const index = categories.findIndex(cat => cat.id === id);
   
   if (index === -1) return null;
@@ -85,7 +85,7 @@ function updateCategoryInLocalStorage(id: string, data: Partial<{ name: string; 
 }
 
 function deleteCategoryFromLocalStorage(id: string): boolean {
-  const categories = getFromStorage(STORAGE_KEYS.CATEGORIES, []);
+  const categories: StoredCategory[] = getFromStorage(STORAGE_KEYS.CATEGORIES, []);
   const filteredCategories = categories.filter(cat => cat.id !== id);
   
   if (filteredCategories.length === categories.length) return false;
@@ -100,7 +100,7 @@ function getItemsFromLocalStorage(filters?: {
   categoryId?: string; 
   query?: string; 
 }): StoredItem[] {
-  let items = getFromStorage(STORAGE_KEYS.ITEMS, []);
+  let items: StoredItem[] = getFromStorage(STORAGE_KEYS.ITEMS, []);
   
   if (filters?.active !== undefined) {
     items = items.filter(item => item.active === filters.active);
@@ -126,9 +126,9 @@ function createItemInLocalStorage(data: {
   active?: boolean;
   sku?: string | null;
 }): StoredItem {
-  const items = getFromStorage(STORAGE_KEYS.ITEMS, []);
+  const items: StoredItem[] = getFromStorage(STORAGE_KEYS.ITEMS, []);
   const newItem: StoredItem = {
-    id: 'item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+    id: 'item-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
     tenantId: '00000000-0000-0000-0000-000000000001',
     categoryId: data.categoryId || null,
     name: data.name,
@@ -151,7 +151,7 @@ function updateItemInLocalStorage(id: string, data: Partial<{
   active: boolean;
   sku: string | null;
 }>): StoredItem | null {
-  const items = getFromStorage(STORAGE_KEYS.ITEMS, []);
+  const items: StoredItem[] = getFromStorage(STORAGE_KEYS.ITEMS, []);
   const index = items.findIndex(item => item.id === id);
   
   if (index === -1) return null;
@@ -170,7 +170,7 @@ function updateItemInLocalStorage(id: string, data: Partial<{
 }
 
 function deleteItemFromLocalStorage(id: string): boolean {
-  const items = getFromStorage(STORAGE_KEYS.ITEMS, []);
+  const items: StoredItem[] = getFromStorage(STORAGE_KEYS.ITEMS, []);
   const filteredItems = items.filter(item => item.id !== id);
   
   if (filteredItems.length === items.length) return false;
@@ -184,8 +184,6 @@ function deleteItemFromLocalStorage(id: string): boolean {
  * Handles both direct table access and view-based access
  */
 export async function ensureTablesReady(): Promise<void> {
-  const supabase = getSupabaseClient();
-  
   try {
     // Test table access
     const { error } = await supabase
@@ -224,97 +222,111 @@ export async function ensureTablesReady(): Promise<void> {
   }
 }
 
+// Helper method for CategoriesAPI
+const getFromLocalStorage = () => getFromStorage(STORAGE_KEYS.CATEGORIES, []);
+
 export const CategoriesAPI = {
   async getAll(): Promise<StoredCategory[]> {
-    if (isSupabaseConfigured()) {
-      try {
-        console.log('[CATEGORIES_API] Fetching from Supabase...');
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase
-          .from('categories')
-          .select('*')
-          .order('created_at', { ascending: false });
-        
-        if (error) throw error;
-        return data || [];
-      } catch (error) {
-        console.warn('[CATEGORIES_API] Supabase error, using localStorage:', error);
-        return this.getFromLocalStorage();
-      }
+    try {
+      console.log('[CATEGORIES_API] Fetching from Supabase...');
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      
+      // Convert database format to StoredCategory format
+      return (data || []).map((item: any) => ({
+        id: item.id,
+        tenantId: item.tenant_id || '00000000-0000-0000-0000-000000000001',
+        name: item.name,
+        position: item.position || 0,
+        createdAt: item.created_at,
+        updatedAt: item.updated_at
+      }));
+    } catch (error) {
+      console.warn('[CATEGORIES_API] Supabase error, using localStorage:', error);
+      return getFromLocalStorage();
     }
-    return this.getFromLocalStorage();
   },
 
   async create(data: { name: string; position?: number }): Promise<StoredCategory> {
-    if (isSupabaseConfigured()) {
-      try {
-        const supabase = getSupabaseClient();
-        const insertData = {
-          name: data.name,
-          position: data.position || 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
-        
-        const { data: result, error } = await supabase
-          .from('categories')
-          .insert(insertData)
-          .select()
-          .single();
-        
-        if (error) throw error;
-        return result;
-      } catch (error) {
-        console.warn('[CATEGORIES_API] Supabase create failed, using localStorage:', error);
-        return createCategoryInLocalStorage(data);
-      }
+    try {
+      const insertData = {
+        name: data.name,
+        position: data.position || 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
+      const { data: result, error } = await supabase
+        .from('categories')
+        .insert(insertData)
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      // Convert database format to StoredCategory format
+      return {
+        id: result.id || '',
+        tenantId: result.tenant_id || '00000000-0000-0000-0000-000000000001',
+        name: result.name || '',
+        position: result.position || 0,
+        createdAt: result.created_at || '',
+        updatedAt: result.updated_at || ''
+      };
+    } catch (error) {
+      console.warn('[CATEGORIES_API] Supabase create failed, using localStorage:', error);
+      return createCategoryInLocalStorage(data);
     }
-    return createCategoryInLocalStorage(data);
   },
 
   async update(id: string, data: Partial<{ name: string; position: number }>): Promise<StoredCategory | null> {
-    if (isSupabaseConfigured()) {
-      try {
-        const supabase = getSupabaseClient();
-        const updateData = {
-          ...data,
-          updated_at: new Date().toISOString()
-        };
-        
-        const { data: result, error } = await supabase
-          .from('categories')
-          .update(updateData)
-          .eq('id', id)
-          .select()
-          .single();
-        
-        if (error) throw error;
-        return result;
-      } catch (error) {
-        console.warn('[CATEGORIES_API] Supabase update failed, using localStorage:', error);
-        return updateCategoryInLocalStorage(id, data);
-      }
+    try {
+      const updateData = {
+        ...data,
+        updated_at: new Date().toISOString()
+      };
+      
+      const { data: result, error } = await supabase
+        .from('categories')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      // Convert database format to StoredCategory format
+      return {
+        id: result.id || '',
+        tenantId: result.tenant_id || '00000000-0000-0000-0000-000000000001',
+        name: result.name || '',
+        position: result.position || 0,
+        createdAt: result.created_at || '',
+        updatedAt: result.updated_at || ''
+      };
+    } catch (error) {
+      console.warn('[CATEGORIES_API] Supabase update failed, using localStorage:', error);
+      return updateCategoryInLocalStorage(id, data);
     }
-    return updateCategoryInLocalStorage(id, data);
   },
 
   async delete(id: string): Promise<boolean> {
-    if (isSupabaseConfigured()) {
-      try {
-        const supabase = getSupabaseClient();
-        const { error } = await supabase
-          .from('categories')
-          .delete()
-          .eq('id', id);
-        
-        if (error) throw error;
-        return true;
-      } catch (error) {
-        console.warn('[CATEGORIES_API] Supabase delete failed, using localStorage:', error);
-        return deleteCategoryFromLocalStorage(id);
-      }
+    try {
+      const { error } = await supabase
+        .from('categories')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.warn('[CATEGORIES_API] Supabase delete failed, using localStorage:', error);
+      return deleteCategoryFromLocalStorage(id);
     }
-    return deleteCategoryFromLocalStorage(id);
   }
 };
 
@@ -326,7 +338,6 @@ export const ItemsAPI = {
   }): Promise<StoredItem[]> {
     try {
       console.log('[ITEMS_API] Fetching from Supabase...');
-      const supabase = getSupabaseClient();
       let query = supabase
         .from('items')
         .select('*')
@@ -349,23 +360,23 @@ export const ItemsAPI = {
       if (filters?.query) {
         const searchQuery = filters.query.toLowerCase();
         items = items.filter(item => 
-          item.name.toLowerCase().includes(searchQuery) ||
+          item.name?.toLowerCase().includes(searchQuery) ||
           (item.sku && item.sku.toLowerCase().includes(searchQuery))
         );
       }
       
       // Convert to StoredItem format
-      return items.map(item => ({
-        id: item.id,
-        tenantId: item.tenant_id,
+      return items.map((item: any) => ({
+        id: item.id || '',
+        tenantId: item.tenant_id || '00000000-0000-0000-0000-000000000001',
         categoryId: null, // No category support in current schema
-        name: item.name,
-        price_cents: item.price_cents,
-        active: item.active,
+        name: item.name || '',
+        price_cents: item.price_cents || 0,
+        active: item.active ?? true,
         sku: item.sku,
-        createdAt: item.created_at,
-        updatedAt: item.updated_at,
-        category: null
+        createdAt: item.created_at || '',
+        updatedAt: item.updated_at || '',
+        category: undefined
       }));
     } catch (error) {
       console.warn('[ITEMS_API] Supabase error, using localStorage:', error);
@@ -382,7 +393,6 @@ export const ItemsAPI = {
   }): Promise<StoredItem> {
     try {
       const priceInCents = Math.round(parseFloat(data.price) * 100);
-      const supabase = getSupabaseClient();
       const insertData = {
         tenant_id: '00000000-0000-0000-0000-000000000001',
         name: data.name,
@@ -411,16 +421,16 @@ export const ItemsAPI = {
       
       // Convert to StoredItem format
       return {
-        id: result.id,
-        tenantId: result.tenant_id,
+        id: result.id || '',
+        tenantId: result.tenant_id || '00000000-0000-0000-0000-000000000001',
         categoryId: null,
-        name: result.name,
-        price_cents: result.price_cents,
-        active: result.active,
+        name: result.name || '',
+        price_cents: result.price_cents || 0,
+        active: result.active ?? true,
         sku: result.sku,
-        createdAt: result.created_at,
-        updatedAt: result.updated_at,
-        category: null
+        createdAt: result.created_at || '',
+        updatedAt: result.updated_at || '',
+        category: undefined
       };
     } catch (error) {
       console.warn('[ITEMS_API] Supabase create failed, using localStorage:', error);
@@ -436,7 +446,6 @@ export const ItemsAPI = {
     sku: string | null;
   }>): Promise<StoredItem | null> {
     try {
-      const supabase = getSupabaseClient();
       const updateData: any = {
         updated_at: new Date().toISOString()
       };
@@ -465,16 +474,16 @@ export const ItemsAPI = {
       
       // Convert to StoredItem format
       return {
-        id: result.id,
-        tenantId: result.tenant_id,
+        id: result.id || '',
+        tenantId: result.tenant_id || '00000000-0000-0000-0000-000000000001',
         categoryId: null,
-        name: result.name,
-        price_cents: result.price_cents,
-        active: result.active,
+        name: result.name || '',
+        price_cents: result.price_cents || 0,
+        active: result.active ?? true,
         sku: result.sku,
-        createdAt: result.created_at,
-        updatedAt: result.updated_at,
-        category: null
+        createdAt: result.created_at || '',
+        updatedAt: result.updated_at || '',
+        category: undefined
       };
     } catch (error) {
       console.warn('[ITEMS_API] Supabase update failed, using localStorage:', error);
@@ -484,7 +493,6 @@ export const ItemsAPI = {
 
   async delete(id: string): Promise<boolean> {
     try {
-      const supabase = getSupabaseClient();
       console.log('[ITEMS_API] Deleting item from Supabase:', id);
       
       const { error } = await supabase

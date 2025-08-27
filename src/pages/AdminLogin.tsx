@@ -1,19 +1,54 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { AdminLoginForm } from '../components/auth/AdminLoginForm';
 import { AdminDashboard } from '../components/admin/AdminDashboard';
+import { AdminUsersDB } from '../lib/admin-database';
+import { authHelpers } from '../lib/supabase';
+import type { AuthUser } from '../../types';
 
 export function AdminLogin() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
 
   useEffect(() => {
-    // Check if admin is already authenticated
-    const token = localStorage.getItem('admin_token');
-    if (token) {
-      setIsAuthenticated(true);
-    }
-    setIsLoading(false);
+    checkAuthState();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = authHelpers.onAuthStateChange(async (user) => {
+      if (user && user.profile?.role === 'admin') {
+        setCurrentUser(user);
+        setIsAuthenticated(true);
+      } else {
+        setCurrentUser(null);
+        setIsAuthenticated(false);
+      }
+    });
+
+    return () => subscription?.unsubscribe?.();
   }, []);
+
+  const checkAuthState = async () => {
+    setIsLoading(true);
+    try {
+      // Check if user is already authenticated and is admin
+      const user = await AdminUsersDB.getCurrentUser();
+      
+      if (user) {
+        console.log('[ADMIN_LOGIN] Found authenticated admin user:', user.id);
+        setCurrentUser(user);
+        setIsAuthenticated(true);
+      } else {
+        console.log('[ADMIN_LOGIN] No authenticated admin user found');
+        setCurrentUser(null);
+        setIsAuthenticated(false);
+      }
+    } catch (error) {
+      console.error('[ADMIN_LOGIN] Error checking auth state:', error);
+      setIsAuthenticated(false);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -26,8 +61,8 @@ export function AdminLogin() {
     );
   }
 
-  if (isAuthenticated) {
-    return <AdminDashboard />;
+  if (isAuthenticated && currentUser) {
+    return <AdminDashboard currentUser={currentUser} />;
   }
 
   return (
@@ -50,7 +85,7 @@ export function AdminLogin() {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          <AdminLoginForm />
+          <AdminLoginForm onLoginSuccess={() => checkAuthState()} />
         </div>
       </div>
     </div>

@@ -2,13 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { QrCode, Download, Printer, RefreshCw, CheckCircle, ShoppingCart } from 'lucide-react';
 import { QRCodeGenerator } from '../ui/QRCodeGenerator';
 import { type QrCodeResult } from '../../utils/paynowQrGenerator';
-import { useOrderContext, type Order } from '../../contexts/OrderContext';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { ProductGrid } from '../pos/ProductGrid';
 import { ShoppingCart as Cart, CartLine } from '../pos/ShoppingCart';
 import { StoredItem as Item } from '@/lib/storage';
 import { formatCentsToPrice } from '@/lib/money';
 import { terminalSync, DEFAULT_TERMINALS, type TerminalQRData } from '../../lib/terminal-sync';
+import { MerchantOrdersDB, type CreateOrderData, type OrderItem as DBOrderItem } from '../../lib/merchant-database';
 
 export function POSSystem() {
   const [amount, setAmount] = useState('');
@@ -17,7 +17,6 @@ export function POSSystem() {
   const [currentQR, setCurrentQR] = useState<QrCodeResult | null>(null);
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
-  const { createOrder, markOrderPaid } = useOrderContext();
   const { businessType, setBusinessType, mobile, uen } = useSettingsContext();
 
   const presetAmounts = [10, 25, 50, 100, 200];
@@ -115,13 +114,13 @@ export function POSSystem() {
       // Set the QR result
       setCurrentQR(qrResult);
       
-      // Create order in context
-      console.log('[POS] Creating order...');
-      const newOrder = await createOrder({
-        amount: parseFloat(amount),
+      // Create order in database
+      console.log('[POS] Creating order in database...');
+      const orderData: CreateOrderData = {
         reference: finalReference,
+        amount: parseFloat(amount),
         description: description || 'PayNow Payment',
-        qrSvg: qrResult.qrCodeSvg, // Include QR SVG in order data
+        qrSvg: qrResult.qrCodeSvg,
         items: cart.map(line => ({
           id: line.itemId,
           name: line.name,
@@ -129,17 +128,17 @@ export function POSSystem() {
           unitPriceCents: line.unitPriceCents,
           totalCents: line.qty * line.unitPriceCents
         }))
-      });
+      };
       
+      const newOrder = await MerchantOrdersDB.create(orderData);
       setCurrentOrderId(newOrder.id);
-      console.log('[POS] Order created with ID:', newOrder?.id);
+      console.log('[POS] Order created with ID:', newOrder.id);
 
       // Send QR data to all displays
       console.log('[POS] Sending QR to display system...');
       
-      // Get current merchant ID
-      const userData = localStorage.getItem('user_data');
-      const merchantId = userData ? JSON.parse(userData).id : '00000000-0000-0000-0000-000000000001';
+      // Use merchant ID from the created order
+      const merchantId = newOrder.tenant_id;
       
       // Broadcast to ALL terminals
       const terminalQRData: TerminalQRData = {
@@ -220,10 +219,13 @@ export function POSSystem() {
       await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_1);
       await terminalSync.clearTerminal(DEFAULT_TERMINALS.COUNTER_2);
       
-      await markOrderPaid(reference);
-      console.log('[POS] Order marked as paid in context');
+      // Mark as paid in database
+      const updatedOrder = await MerchantOrdersDB.markPaidByReference(reference);
+      console.log('[POS] Order marked as paid in database:', updatedOrder?.id);
     } catch (error) {
       console.error('[POS] Failed to mark order as paid:', error);
+      alert('Failed to mark order as paid: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      return;
     }
 
     // Reset form for next order
@@ -298,10 +300,10 @@ export function POSSystem() {
       // Set the QR result
       setCurrentQR(qrResult);
       
-      // Create order in context
-      const newOrder = await createOrder({
-        amount: parseFloat(subtotalAmount),
+      // Create order in database
+      const cartOrderData: CreateOrderData = {
         reference: finalReference,
+        amount: parseFloat(subtotalAmount),
         description: finalDescription,
         qrSvg: qrResult.qrCodeSvg,
         items: cart.map(line => ({
@@ -311,15 +313,15 @@ export function POSSystem() {
           unitPriceCents: line.unitPriceCents,
           totalCents: line.qty * line.unitPriceCents
         }))
-      });
+      };
       
+      const newOrder = await MerchantOrdersDB.create(cartOrderData);
       setCurrentOrderId(newOrder.id);
-      console.log('[POS] Order created from cart with ID:', newOrder?.id);
+      console.log('[POS] Order created from cart with ID:', newOrder.id);
 
       // Send QR data to all displays
-      // Get current merchant ID
-      const userData = localStorage.getItem('user_data');
-      const merchantId = userData ? JSON.parse(userData).id : '00000000-0000-0000-0000-000000000001';
+      // Use merchant ID from the created order
+      const merchantId = newOrder.tenant_id;
       
       // Broadcast to ALL terminals
       const terminalQRData: TerminalQRData = {

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { supabase } from '../lib/supabase';
 
 interface SettingsContextType {
   businessType: 'mobile' | 'uen';
@@ -26,19 +27,77 @@ const SettingsContext = createContext<SettingsContextType | undefined>(undefined
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [currentMerchant, setCurrentMerchant] = useState<any>(null);
   
-  // Initialize from logged-in merchant data
+  // Initialize from Supabase session and merchant data
   React.useEffect(() => {
-    const userData = localStorage.getItem('user_data');
-    if (userData) {
-      try {
-        const merchant = JSON.parse(userData);
-        console.log('[SETTINGS_CONTEXT] Loading merchant data:', merchant);
-        setCurrentMerchant(merchant);
-      } catch (error) {
-        console.error('[SETTINGS_CONTEXT] Error parsing user data:', error);
+    loadMerchantFromSession();
+    
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[SETTINGS_CONTEXT] Auth state changed:', event);
+      
+      if (event === 'SIGNED_IN' && session?.user) {
+        await loadMerchantFromSession();
+      } else if (event === 'SIGNED_OUT') {
+        setCurrentMerchant(null);
       }
-    }
+    });
+    
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
+
+  const loadMerchantFromSession = async () => {
+    try {
+      console.log('[SETTINGS_CONTEXT] Loading merchant from Supabase session...');
+      
+      // Get current user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError || !user) {
+        console.log('[SETTINGS_CONTEXT] No authenticated user found');
+        setCurrentMerchant(null);
+        return;
+      }
+      
+      // Get merchant data linked to this user's profile
+      const { data: merchant, error: merchantError } = await supabase
+        .from('merchants')
+        .select('*')
+        .eq('profile_id', user.id)
+        .single();
+        
+      if (merchantError || !merchant) {
+        console.warn('[SETTINGS_CONTEXT] No merchant found for user:', merchantError);
+        setCurrentMerchant(null);
+        return;
+      }
+      
+      // Convert to expected format
+      const merchantData = {
+        id: merchant.id,
+        businessName: merchant.business_name,
+        email: user.email,
+        uen: merchant.uen,
+        mobile: merchant.mobile,
+        address: merchant.address,
+        status: merchant.status,
+        subscriptionPlan: merchant.subscription_plan,
+        monthlyRevenue: merchant.monthly_revenue,
+        subscriptionLink: merchant.subscription_link
+      };
+      
+      console.log('[SETTINGS_CONTEXT] Merchant data loaded from database:', merchantData.businessName);
+      setCurrentMerchant(merchantData);
+      
+      // Also update localStorage for backward compatibility
+      localStorage.setItem('merchant_data', JSON.stringify(merchantData));
+      
+    } catch (error) {
+      console.error('[SETTINGS_CONTEXT] Error loading merchant from session:', error);
+      setCurrentMerchant(null);
+    }
+  };
   
   // Derive settings from current merchant or use defaults
   const businessType = currentMerchant?.uen ? 'uen' : 'mobile';
@@ -47,44 +106,77 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const businessName = currentMerchant?.businessName || '';
   const address = currentMerchant?.address || '';
   
+  const updateMerchantInDatabase = async (updates: any) => {
+    if (!currentMerchant) return;
+    
+    try {
+      console.log('[SETTINGS_CONTEXT] Updating merchant in database:', updates);
+      
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error('Not authenticated');
+      }
+      
+      // Update merchant record
+      const { error } = await supabase
+        .from('merchants')
+        .update({
+          business_name: updates.businessName,
+          uen: updates.uen,
+          mobile: updates.mobile,
+          address: updates.address,
+          updated_at: new Date().toISOString()
+        })
+        .eq('profile_id', user.id);
+      
+      if (error) {
+        console.error('[SETTINGS_CONTEXT] Database update failed:', error);
+        throw error;
+      }
+      
+      console.log('[SETTINGS_CONTEXT] Merchant updated in database successfully');
+      
+      // Update local state and localStorage
+      const updatedMerchant = { ...currentMerchant, ...updates };
+      setCurrentMerchant(updatedMerchant);
+      localStorage.setItem('merchant_data', JSON.stringify(updatedMerchant));
+      
+    } catch (error) {
+      console.error('[SETTINGS_CONTEXT] Error updating merchant:', error);
+      // Still update local state for better UX
+      const updatedMerchant = { ...currentMerchant, ...updates };
+      setCurrentMerchant(updatedMerchant);
+      localStorage.setItem('merchant_data', JSON.stringify(updatedMerchant));
+    }
+  };
+
   const setBusinessType = (type: 'mobile' | 'uen') => {
-    // Update merchant data
+    // This is just for UI selection, doesn't need to update database
+    console.log('[SETTINGS_CONTEXT] Business type preference set to:', type);
+  };
+  
+  const setUEN = async (newUen: string) => {
     if (currentMerchant) {
-      const updatedMerchant = { ...currentMerchant };
-      localStorage.setItem('user_data', JSON.stringify(updatedMerchant));
-      setCurrentMerchant(updatedMerchant);
+      await updateMerchantInDatabase({ ...currentMerchant, uen: newUen });
     }
   };
   
-  const setUEN = (newUen: string) => {
+  const setMobile = async (newMobile: string) => {
     if (currentMerchant) {
-      const updatedMerchant = { ...currentMerchant, uen: newUen };
-      localStorage.setItem('user_data', JSON.stringify(updatedMerchant));
-      setCurrentMerchant(updatedMerchant);
+      const formattedMobile = newMobile.startsWith('+65') ? newMobile : `+65${newMobile}`;
+      await updateMerchantInDatabase({ ...currentMerchant, mobile: formattedMobile });
     }
   };
   
-  const setMobile = (newMobile: string) => {
+  const setBusinessName = async (name: string) => {
     if (currentMerchant) {
-      const updatedMerchant = { ...currentMerchant, mobile: newMobile.startsWith('+65') ? newMobile : `+65${newMobile}` };
-      localStorage.setItem('user_data', JSON.stringify(updatedMerchant));
-      setCurrentMerchant(updatedMerchant);
+      await updateMerchantInDatabase({ ...currentMerchant, businessName: name });
     }
   };
   
-  const setBusinessName = (name: string) => {
+  const setAddress = async (newAddress: string) => {
     if (currentMerchant) {
-      const updatedMerchant = { ...currentMerchant, businessName: name };
-      localStorage.setItem('user_data', JSON.stringify(updatedMerchant));
-      setCurrentMerchant(updatedMerchant);
-    }
-  };
-  
-  const setAddress = (newAddress: string) => {
-    if (currentMerchant) {
-      const updatedMerchant = { ...currentMerchant, address: newAddress };
-      localStorage.setItem('user_data', JSON.stringify(updatedMerchant));
-      setCurrentMerchant(updatedMerchant);
+      await updateMerchantInDatabase({ ...currentMerchant, address: newAddress });
     }
   };
   

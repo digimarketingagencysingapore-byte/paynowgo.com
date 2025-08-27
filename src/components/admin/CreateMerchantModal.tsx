@@ -26,47 +26,97 @@ export function CreateMerchantModal({ onClose, onSuccess }: CreateMerchantModalP
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('=== MERCHANT CREATION DEBUG START ===');
+    console.log('[CREATE_MERCHANT] Form submitted at:', new Date().toISOString());
+    console.log('[CREATE_MERCHANT] Raw form data:', formData);
+    
     // Basic validation
     if (!formData.businessName.trim()) {
+      console.log('[CREATE_MERCHANT] Validation failed: Business name is required');
       setError('Business name is required');
       return;
     }
     
     if (!formData.email.trim()) {
+      console.log('[CREATE_MERCHANT] Validation failed: Email is required');
       setError('Email is required');
       return;
     }
     
     if (!formData.password.trim() || formData.password.length < 8) {
+      console.log('[CREATE_MERCHANT] Validation failed: Password must be at least 8 characters');
       setError('Password must be at least 8 characters');
       return;
     }
     
+    console.log('[CREATE_MERCHANT] Form validation passed, setting loading state...');
     setIsLoading(true);
     setError('');
 
     try {
-      console.log('[CREATE_MERCHANT] Creating merchant with data:', formData);
+      console.log('[CREATE_MERCHANT] Preparing createData object...');
       
-      const newMerchant = await MerchantsDB.create({
-        businessName: formData.businessName,
-        email: formData.email,
+      const createData = {
+        businessName: formData.businessName.trim(),
+        email: formData.email.trim().toLowerCase(),
         password: formData.password,
-        uen: formData.uen || undefined,
-        mobile: formData.mobile || undefined,
-        address: formData.address || undefined,
-        subscriptionPlan: 'basic',
-        subscriptionLink: formData.subscriptionLink.trim() || undefined
+        uen: formData.uen.trim() || undefined,
+        mobile: formData.mobile.trim() || undefined,
+        address: formData.address.trim() || undefined,
+        subscriptionPlan: 'basic' as const,
+        subscriptionLink: formData.subscriptionLink.trim() || undefined,
+        monthlyRevenue: formData.monthlyRevenue ? parseFloat(formData.monthlyRevenue) : undefined
+      };
+
+      console.log('[CREATE_MERCHANT] Final createData object:', createData);
+      console.log('[CREATE_MERCHANT] About to call MerchantsDB.create...');
+      
+      const startTime = Date.now();
+      const newMerchant = await MerchantsDB.create(createData);
+      const endTime = Date.now();
+      
+      console.log(`[CREATE_MERCHANT] ✅ SUCCESS! Merchant created in ${endTime - startTime}ms:`, newMerchant);
+      
+      console.log('[CREATE_MERCHANT] Clearing form data and closing modal...');
+      // Clear form and close modal
+      setFormData({
+        businessName: '',
+        email: '',
+        password: '',
+        uen: '',
+        mobile: '',
+        address: '',
+        subscriptionLink: '',
+        monthlyRevenue: ''
       });
       
-      console.log('[CREATE_MERCHANT] Merchant created successfully:', newMerchant);
+      console.log('[CREATE_MERCHANT] Showing success message...');
       alert('Merchant created successfully!');
       onSuccess(newMerchant);
+      onClose(); // Close the modal
+      console.log('[CREATE_MERCHANT] Modal closed successfully');
+      
     } catch (error) {
-      console.error('[CREATE_MERCHANT] Error creating merchant:', error);
-      setError(error instanceof Error ? error.message : 'Failed to create merchant');
+      console.log('[CREATE_MERCHANT] ❌ ERROR CAUGHT in handleSubmit:');
+      console.error('[CREATE_MERCHANT] Error details:', error);
+      console.log('[CREATE_MERCHANT] Error type:', typeof error);
+      console.log('[CREATE_MERCHANT] Error constructor:', error.constructor.name);
+      
+      if (error instanceof Error) {
+        console.log('[CREATE_MERCHANT] Error message:', error.message);
+        console.log('[CREATE_MERCHANT] Error stack:', error.stack);
+      }
+      
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create merchant';
+      console.log('[CREATE_MERCHANT] Setting error message:', errorMessage);
+      setError(`Error: ${errorMessage}`);
+      
+      // Keep the form open so user can see the error and try again
+      console.log('[CREATE_MERCHANT] Form kept open for error display');
     } finally {
+      console.log('[CREATE_MERCHANT] Setting loading state to false...');
       setIsLoading(false);
+      console.log('=== MERCHANT CREATION DEBUG END ===');
     }
   };
 

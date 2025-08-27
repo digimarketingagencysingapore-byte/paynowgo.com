@@ -40,22 +40,30 @@ export function EditMerchantModal({ merchant, onClose, onSuccess }: EditMerchant
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('=== EDIT_MERCHANT MODAL SUBMIT START ===');
+    console.log('[EDIT_MERCHANT] Form submitted at:', new Date().toISOString());
+    console.log('[EDIT_MERCHANT] Merchant ID:', merchant.id);
+    console.log('[EDIT_MERCHANT] Raw form data:', formData);
+    
     // Basic validation
     if (!formData.businessName.trim()) {
+      console.log('[EDIT_MERCHANT] Validation failed: Business name is required');
       setError('Business name is required');
       return;
     }
     
     if (!formData.email.trim()) {
+      console.log('[EDIT_MERCHANT] Validation failed: Email is required');
       setError('Email is required');
       return;
     }
     
+    console.log('[EDIT_MERCHANT] Form validation passed, setting loading state...');
     setIsLoading(true);
     setError('');
 
     try {
-      console.log('[EDIT_MERCHANT] Updating merchant with data:', formData);
+      console.log('[EDIT_MERCHANT] Preparing cleanData object...');
       
       // Clean up empty fields - convert empty strings to null for proper clearing
       const cleanData = {
@@ -69,18 +77,44 @@ export function EditMerchantModal({ merchant, onClose, onSuccess }: EditMerchant
         subscriptionLink: formData.subscriptionLink.trim() || null
       };
       
-      console.log('[EDIT_MERCHANT] Clean data (null = will be cleared):', cleanData);
+      console.log('[EDIT_MERCHANT] Clean data object:', cleanData);
+      console.log('[EDIT_MERCHANT] Clean data types:', Object.keys(cleanData).map(key => `${key}: ${typeof cleanData[key as keyof typeof cleanData]} = ${cleanData[key as keyof typeof cleanData]}`));
+      console.log('[EDIT_MERCHANT] About to call MerchantsDB.update...');
       
+      const updateStartTime = Date.now();
       const updatedMerchant = await MerchantsDB.update(merchant.id, cleanData);
+      const updateEndTime = Date.now();
       
-      console.log('[EDIT_MERCHANT] Merchant updated successfully:', updatedMerchant);
+      console.log(`[EDIT_MERCHANT] ✅ SUCCESS! Merchant updated in ${updateEndTime - updateStartTime}ms:`, updatedMerchant);
+      
+      console.log('[EDIT_MERCHANT] Showing success message and calling onSuccess...');
       alert('Merchant updated successfully!');
       onSuccess(updatedMerchant);
+      
+      console.log('[EDIT_MERCHANT] Modal should close now via onSuccess callback');
+      
     } catch (error) {
-      console.error('[EDIT_MERCHANT] Error updating merchant:', error);
-      setError(error instanceof Error ? error.message : 'Failed to update merchant');
+      console.log('[EDIT_MERCHANT] ❌ ERROR CAUGHT in handleSubmit:');
+      console.error('[EDIT_MERCHANT] Error details:', error);
+      console.log('[EDIT_MERCHANT] Error type:', typeof error);
+      console.log('[EDIT_MERCHANT] Error constructor:', error?.constructor?.name);
+      
+      if (error instanceof Error) {
+        console.log('[EDIT_MERCHANT] Error message:', error.message);
+        console.log('[EDIT_MERCHANT] Error stack:', error.stack);
+      }
+      
+      const errorMessage = error instanceof Error ? error.message : 'Failed to update merchant';
+      console.log('[EDIT_MERCHANT] Setting error message:', errorMessage);
+      setError(errorMessage);
+      
+      // Keep the form open so user can see the error and try again
+      console.log('[EDIT_MERCHANT] Form kept open for error display');
+      
     } finally {
+      console.log('[EDIT_MERCHANT] Setting loading state to false...');
       setIsLoading(false);
+      console.log('=== EDIT_MERCHANT MODAL SUBMIT END ===');
     }
   };
 

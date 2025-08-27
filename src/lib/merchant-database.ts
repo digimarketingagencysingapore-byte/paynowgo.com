@@ -7,24 +7,73 @@
 import { supabase } from './supabase';
 import { terminalSync, getTerminalIdFromDeviceKey, DEFAULT_TERMINALS, type TerminalQRData } from './terminal-sync';
 
-// Get current merchant ID
-function getCurrentMerchantId(): string {
+// New database interfaces for direct Supabase operations
+export interface MerchantOrder {
+  id: string;
+  reference: string;
+  amount: number;
+  status: 'pending' | 'paid' | 'canceled' | 'expired';
+  qr_svg?: string;
+  payload?: string;
+  expires_at?: string;
+  created_at: string;
+  tenant_id: string;
+}
+
+export interface OrderItem {
+  id: string;
+  name: string;
+  quantity: number;
+  unitPriceCents: number;
+  totalCents: number;
+}
+
+export interface CreateOrderData {
+  reference: string;
+  amount: number;
+  description?: string;
+  qrSvg?: string;
+  items?: OrderItem[];
+}
+
+// Get current merchant ID from Supabase session
+async function getCurrentMerchantId(): Promise<string> {
   try {
-    const userData = localStorage.getItem('user_data');
-    if (userData) {
-      const merchant = JSON.parse(userData);
-      return merchant.id;
+    console.log('[MERCHANT_DB] Getting merchant ID from Supabase session...');
+    
+    // Get current user from Supabase
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !user) {
+      console.warn('[MERCHANT_DB] No authenticated user found:', userError);
+      throw new Error('User not authenticated');
     }
+
+    // Get merchant data linked to this user's profile
+    const { data: merchant, error: merchantError } = await supabase
+      .from('merchants')
+      .select('id')
+      .eq('profile_id', user.id)
+      .single();
+      
+    if (merchantError || !merchant) {
+      console.warn('[MERCHANT_DB] No merchant found for user:', merchantError);
+      throw new Error('Merchant not found for current user');
+    }
+    
+    console.log('[MERCHANT_DB] Current merchant ID:', merchant.id);
+    return merchant.id;
+    
   } catch (error) {
-    console.error('Error getting current merchant ID:', error);
+    console.error('[MERCHANT_DB] Error getting current merchant ID:', error);
+    throw error;
   }
-  return '00000000-0000-0000-0000-000000000001'; // Fallback
 }
 
 // Display Devices API
 export const MerchantDisplayDevicesAPI = {
   async getAll(): Promise<any[]> {
-    const merchantId = getCurrentMerchantId();
+    const merchantId = await getCurrentMerchantId();
     console.log('[DISPLAY_DEVICES_API] Getting devices for merchant:', merchantId);
     
     const { data, error } = await supabase
@@ -50,7 +99,7 @@ export const MerchantDisplayDevicesAPI = {
   },
 
   async update(deviceId: string, data: { active?: boolean; device_name?: string }): Promise<any> {
-    const merchantId = getCurrentMerchantId();
+    const merchantId = await getCurrentMerchantId();
     console.log('[DISPLAY_DEVICES_API] Updating device:', deviceId, 'for merchant:', merchantId);
     
     try {
@@ -92,7 +141,7 @@ export const MerchantDisplayDevicesAPI = {
   },
 
   async create(data: { device_name: string; device_key: string }): Promise<any> {
-    const merchantId = getCurrentMerchantId();
+    const merchantId = await getCurrentMerchantId();
     
     try {
       const { data: result, error } = await supabase
@@ -194,7 +243,7 @@ export const MerchantDisplayDevicesAPI = {
 // Merchant Orders API
 export const MerchantOrdersAPI = {
   async getAll(): Promise<any[]> {
-    const merchantId = getCurrentMerchantId();
+    const merchantId = await getCurrentMerchantId();
     console.log('[MERCHANT_ORDERS_API] Getting orders for merchant:', merchantId);
     
     try {
@@ -241,7 +290,7 @@ export const MerchantOrdersAPI = {
     expires_at?: string;
     items?: any[];
   }): Promise<any> {
-    const merchantId = getCurrentMerchantId();
+    const merchantId = await getCurrentMerchantId();
     console.log('[MERCHANT_ORDERS_API] Creating order for merchant:', merchantId);
     
     try {
@@ -291,7 +340,7 @@ export const MerchantOrdersAPI = {
   },
 
   async updateStatus(orderId: string, status: string): Promise<any> {
-    const merchantId = getCurrentMerchantId();
+    const merchantId = await getCurrentMerchantId();
     
     try {
       const { data: result, error } = await supabase
@@ -375,7 +424,7 @@ export const MerchantQREventsAPI = {
     reference: string;
     expiresAt: string;
   }): Promise<void> {
-    const merchantId = getCurrentMerchantId();
+    const merchantId = await getCurrentMerchantId();
     console.log('[QR_EVENTS_API] Broadcasting show QR to ALL terminals for merchant:', merchantId);
     
     // Get all active terminals for this merchant
@@ -431,7 +480,7 @@ export const MerchantQREventsAPI = {
   },
 
   async broadcastHideQR(): Promise<void> {
-    const merchantId = getCurrentMerchantId();
+    const merchantId = await getCurrentMerchantId();
     console.log('[QR_EVENTS_API] Broadcasting hide QR to ALL terminals for merchant:', merchantId);
     
     // Get all active terminals for this merchant
@@ -470,7 +519,7 @@ export const MerchantQREventsAPI = {
   },
 
   async getCurrentQR(): Promise<any> {
-    const merchantId = getCurrentMerchantId();
+    const merchantId = await getCurrentMerchantId();
     console.log('[QR_EVENTS_API] Getting current QR for merchant:', merchantId);
     
     // Check all active terminals for current QR
@@ -576,8 +625,8 @@ export const MerchantQREventsAPI = {
   },
 
   // Subscribe to QR events for displays
-  subscribeToQREvents(callback: (qrData: any) => void): () => void {
-    const merchantId = getCurrentMerchantId();
+  async subscribeToQREvents(callback: (qrData: any) => void): Promise<() => void> {
+    const merchantId = await getCurrentMerchantId();
     console.log('[QR_EVENTS_API] Subscribing to QR events for ALL terminals of merchant:', merchantId);
     
     // Subscribe to ALL terminals for this merchant
@@ -607,3 +656,203 @@ export const MerchantQREventsAPI = {
     };
   }
 };
+
+// New MerchantOrdersDB class for direct Supabase operations
+export class MerchantOrdersDB {
+
+  /**
+   * Create a new order in the database
+   */
+  static async create(orderData: CreateOrderData): Promise<MerchantOrder> {
+    console.log('[MERCHANT_ORDERS_DB] Creating order:', orderData);
+
+    try {
+      const merchantId = await getCurrentMerchantId();
+      console.log('[MERCHANT_ORDERS_DB] Using merchant ID:', merchantId);
+
+      // Create order record
+      const { data: order, error } = await supabase
+        .from('orders')
+        .insert({
+          tenant_id: merchantId,
+          reference: orderData.reference,
+          amount: orderData.amount,
+          status: 'pending',
+          qr_svg: orderData.qrSvg || null,
+          payload: JSON.stringify({
+            description: orderData.description || 'PayNow Payment',
+            items: orderData.items || []
+          }),
+          expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString() // 15 minutes from now
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('[MERCHANT_ORDERS_DB] Database error:', error);
+        throw new Error(`Failed to create order: ${error.message}`);
+      }
+
+      console.log('[MERCHANT_ORDERS_DB] Order created successfully:', order.id);
+      return order as MerchantOrder;
+
+    } catch (error) {
+      console.error('[MERCHANT_ORDERS_DB] Error creating order:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all orders for the current merchant
+   */
+  static async getAll(): Promise<MerchantOrder[]> {
+    console.log('[MERCHANT_ORDERS_DB] Getting all orders');
+
+    try {
+      const merchantId = await getCurrentMerchantId();
+      console.log('[MERCHANT_ORDERS_DB] Using merchant ID:', merchantId);
+
+      const { data: orders, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('tenant_id', merchantId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[MERCHANT_ORDERS_DB] Database error:', error);
+        throw new Error(`Failed to fetch orders: ${error.message}`);
+      }
+
+      console.log('[MERCHANT_ORDERS_DB] Found orders:', orders.length);
+      return orders as MerchantOrder[];
+
+    } catch (error) {
+      console.error('[MERCHANT_ORDERS_DB] Error fetching orders:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update order status
+   */
+  static async updateStatus(orderId: string, status: 'paid' | 'canceled' | 'expired'): Promise<MerchantOrder | null> {
+    console.log('[MERCHANT_ORDERS_DB] Updating order status:', orderId, status);
+
+    try {
+      const merchantId = await getCurrentMerchantId();
+
+      const { data: order, error } = await supabase
+        .from('orders')
+        .update({ status })
+        .eq('id', orderId)
+        .eq('tenant_id', merchantId) // Ensure merchant owns this order
+        .select()
+        .single();
+
+      if (error) {
+        console.error('[MERCHANT_ORDERS_DB] Database error:', error);
+        throw new Error(`Failed to update order status: ${error.message}`);
+      }
+
+      console.log('[MERCHANT_ORDERS_DB] Order status updated successfully');
+      return order as MerchantOrder;
+
+    } catch (error) {
+      console.error('[MERCHANT_ORDERS_DB] Error updating order status:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete an order
+   */
+  static async delete(orderId: string): Promise<boolean> {
+    console.log('[MERCHANT_ORDERS_DB] Deleting order:', orderId);
+
+    try {
+      const merchantId = await getCurrentMerchantId();
+
+      const { error } = await supabase
+        .from('orders')
+        .delete()
+        .eq('id', orderId)
+        .eq('tenant_id', merchantId); // Ensure merchant owns this order
+
+      if (error) {
+        console.error('[MERCHANT_ORDERS_DB] Database error:', error);
+        throw new Error(`Failed to delete order: ${error.message}`);
+      }
+
+      console.log('[MERCHANT_ORDERS_DB] Order deleted successfully');
+      return true;
+
+    } catch (error) {
+      console.error('[MERCHANT_ORDERS_DB] Error deleting order:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get order by reference
+   */
+  static async getByReference(reference: string): Promise<MerchantOrder | null> {
+    console.log('[MERCHANT_ORDERS_DB] Getting order by reference:', reference);
+
+    try {
+      const merchantId = await getCurrentMerchantId();
+
+      const { data: order, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('reference', reference)
+        .eq('tenant_id', merchantId)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No rows found
+          return null;
+        }
+        console.error('[MERCHANT_ORDERS_DB] Database error:', error);
+        throw new Error(`Failed to fetch order: ${error.message}`);
+      }
+
+      return order as MerchantOrder;
+
+    } catch (error) {
+      console.error('[MERCHANT_ORDERS_DB] Error fetching order by reference:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Mark order as paid by reference
+   */
+  static async markPaidByReference(reference: string): Promise<MerchantOrder | null> {
+    console.log('[MERCHANT_ORDERS_DB] Marking order paid by reference:', reference);
+
+    try {
+      const merchantId = await getCurrentMerchantId();
+
+      const { data: order, error } = await supabase
+        .from('orders')
+        .update({ status: 'paid' })
+        .eq('reference', reference)
+        .eq('tenant_id', merchantId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('[MERCHANT_ORDERS_DB] Database error:', error);
+        throw new Error(`Failed to mark order as paid: ${error.message}`);
+      }
+
+      console.log('[MERCHANT_ORDERS_DB] Order marked as paid successfully');
+      return order as MerchantOrder;
+
+    } catch (error) {
+      console.error('[MERCHANT_ORDERS_DB] Error marking order as paid:', error);
+      throw error;
+    }
+  }
+}
