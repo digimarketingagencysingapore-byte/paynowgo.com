@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ItemForm } from './ItemForm';
 import { CategoryForm } from './CategoryForm';
-import { StoredItem as Item, StoredCategory as ItemCategory } from '@/lib/storage';
+import { StoredItem as Item, StoredCategory as ItemCategory } from '@/@types';
 import { formatCentsToSGD } from '@/lib/money';
 import { ItemsAPI, CategoriesAPI } from '@/lib/storage';
 

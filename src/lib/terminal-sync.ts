@@ -6,6 +6,13 @@
 
 import { supabase } from './supabase.js';
 
+export interface DisplayOrderItem {
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
 export interface TerminalQRData {
   orderId: string;
   qrSvg: string;
@@ -15,6 +22,7 @@ export interface TerminalQRData {
   terminalId: string;
   merchantId: string;
   timestamp: number;
+  items?: DisplayOrderItem[]; // Order items to show on display
 }
 
 export interface TerminalState {
@@ -41,10 +49,15 @@ export class TerminalSyncManager {
    * Called from POS system (any device)
    */
   async broadcastToTerminal(terminalId: string, qrData: TerminalQRData): Promise<void> {
-    console.log('[TERMINAL_SYNC] Broadcasting QR to terminal:', terminalId, {
+    console.log('[TERMINAL_SYNC] 📡 Broadcasting QR to terminal:', terminalId);
+    console.log('[TERMINAL_SYNC] QR Data:', {
       orderId: qrData.orderId,
       amount: qrData.amount,
-      reference: qrData.reference
+      reference: qrData.reference,
+      merchantId: qrData.merchantId,
+      hasQrSvg: !!qrData.qrSvg,
+      hasItems: !!(qrData.items && qrData.items.length > 0),
+      itemsCount: qrData.items?.length || 0
     });
 
     try {
@@ -256,6 +269,8 @@ export class TerminalSyncManager {
    */
   private async storeTerminalState(terminalId: string, qrData: TerminalQRData): Promise<void> {
     try {
+      console.log('[TERMINAL_SYNC] Storing terminal state for device_key:', terminalId, 'merchantId:', qrData.merchantId);
+      
       // First, find the terminal UUID by device_key
       const { data: terminal, error: terminalError } = await supabase
         .from('terminals')
@@ -265,28 +280,49 @@ export class TerminalSyncManager {
         .maybeSingle();
 
       if (terminalError || !terminal) {
-        console.warn('[TERMINAL_SYNC] Terminal not found for device_key:', terminalId);
+        console.error('[TERMINAL_SYNC] ❌ Terminal not found for device_key:', terminalId);
+        console.error('[TERMINAL_SYNC] Error details:', terminalError);
+        console.error('[TERMINAL_SYNC] This means display_states cannot be stored!');
+        console.error('[TERMINAL_SYNC] Fix: Ensure terminal record exists in terminals table');
+        console.error('[TERMINAL_SYNC] Expected: device_key =', terminalId, 'tenant_id =', qrData.merchantId);
         return;
       }
 
+      console.log('[TERMINAL_SYNC] ✅ Terminal found:', terminal.id, 'for device_key:', terminalId);
+
+      console.log('[TERMINAL_SYNC] Upserting display_states for terminal UUID:', terminal.id);
+      
+      const displayStateData = {
+        device_id: terminal.id, // Use UUID, not device_key
+        tenant_id: qrData.merchantId,
+        state: 'show',
+        order_id: qrData.orderId,
+        amount: qrData.amount.toString(),
+        reference: qrData.reference,
+        qr_svg: qrData.qrSvg,
+        expires_at: qrData.expiresAt,
+        updated_at: new Date().toISOString()
+      };
+      
+      console.log('[TERMINAL_SYNC] Display state data:', {
+        device_id: displayStateData.device_id,
+        tenant_id: displayStateData.tenant_id,
+        state: displayStateData.state,
+        order_id: displayStateData.order_id,
+        reference: displayStateData.reference,
+        hasQrSvg: !!displayStateData.qr_svg,
+        expires_at: displayStateData.expires_at
+      });
+
       const { error } = await supabase
         .from('display_states')
-        .upsert({
-          device_id: terminal.id, // Use UUID, not device_key
-          tenant_id: qrData.merchantId,
-          state: 'show',
-          order_id: qrData.orderId,
-          amount: qrData.amount.toString(),
-          reference: qrData.reference,
-          qr_svg: qrData.qrSvg,
-          expires_at: qrData.expiresAt,
-          updated_at: new Date().toISOString()
-        });
+        .upsert(displayStateData);
 
       if (error) {
-        console.warn('[TERMINAL_SYNC] Database store failed:', error);
+        console.error('[TERMINAL_SYNC] ❌ Database store failed:', error);
+        console.error('[TERMINAL_SYNC] Failed to store display state - display will not show QR!');
       } else {
-        console.log('[TERMINAL_SYNC] Terminal state stored in database');
+        console.log('[TERMINAL_SYNC] ✅ Display state stored successfully in database');
       }
     } catch (error) {
       console.warn('[TERMINAL_SYNC] Database not available:', error);

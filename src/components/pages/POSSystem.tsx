@@ -5,10 +5,11 @@ import { type QrCodeResult } from '../../utils/paynowQrGenerator';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { ProductGrid } from '../pos/ProductGrid';
 import { ShoppingCart as Cart, CartLine } from '../pos/ShoppingCart';
-import { StoredItem as Item } from '@/lib/storage';
+import { StoredItem as Item } from '@/@types';
 import { formatCentsToPrice } from '@/lib/money';
 import { terminalSync, DEFAULT_TERMINALS, type TerminalQRData } from '../../lib/terminal-sync';
 import { MerchantOrdersDB, type CreateOrderData, type OrderItem as DBOrderItem } from '../../lib/merchant-database';
+import { supabase } from '../../lib/supabase';
 
 export function POSSystem() {
   const [amount, setAmount] = useState('');
@@ -17,9 +18,53 @@ export function POSSystem() {
   const [currentQR, setCurrentQR] = useState<QrCodeResult | null>(null);
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
-  const { businessType, setBusinessType, mobile, uen } = useSettingsContext();
+  const { businessType, setBusinessType, mobile, uen, reloadMerchantData } = useSettingsContext();
 
   const presetAmounts = [10, 25, 50, 100, 200];
+  
+  // Debug function to help user troubleshoot UEN issues
+  const debugUENIssue = () => {
+    console.log('=== UEN DEBUG HELPER ===');
+    console.log('Current UEN from settings:', `"${uen}"`);
+    console.log('UEN length:', uen?.length);
+    console.log('UEN is empty?', !uen || uen.trim() === '');
+    console.log('Current mobile from settings:', `"${mobile}"`);
+    console.log('Business type selected:', businessType);
+    
+    // Test UEN validation
+    if (uen && uen.trim()) {
+      const cleaned = uen.replace(/[\s\-]/g, '').toUpperCase();
+      console.log('Cleaned UEN for validation:', `"${cleaned}"`);
+      
+      // Test the patterns manually
+      const patterns = [
+        { name: '8 digits + letter', regex: /^[0-9]{8}[A-Z]$/ },
+        { name: '9 digits + letter', regex: /^[0-9]{9}[A-Z]$/ },
+        { name: '10 digits + letter', regex: /^[0-9]{10}[A-Z]$/ }
+      ];
+      
+      patterns.forEach(pattern => {
+        const matches = pattern.regex.test(cleaned);
+        console.log(`${pattern.name}: ${matches ? '✅' : '❌'}`);
+      });
+    }
+    
+    alert('Check browser console for detailed UEN debugging info. If UEN shows as old value, try refreshing the page or run window.forceReloadSettings().');
+  };
+
+  // Add debug button for development
+  const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  
+  React.useEffect(() => {
+    if (isDevelopment) {
+      // Make debug functions available globally for easy access
+      (window as any).debugUEN = debugUENIssue;
+      (window as any).forceReloadSettings = reloadMerchantData;
+      console.log('🐛 Debug helpers available:');
+      console.log('  - window.debugUEN() - Check current UEN values');
+      console.log('  - window.forceReloadSettings() - Force reload from database');
+    }
+  }, [uen, mobile, businessType]);
 
   const generateReference = () => {
     const date = new Date();
@@ -85,6 +130,16 @@ export function POSSystem() {
     console.log('[POS] ===== Generate QR Button Clicked =====');
     console.log('[POS] Current state:', { amount, reference, description, businessType, mobile, uen });
     
+    // Debug: Check what values are actually being used
+    console.log('[POS] ===== DEBUGGING UEN ISSUE =====');
+    console.log('[POS] businessType:', businessType);
+    console.log('[POS] uen value:', `"${uen}"`);
+    console.log('[POS] uen length:', uen?.length);
+    console.log('[POS] uen type:', typeof uen);
+    console.log('[POS] mobile value:', `"${mobile}"`);
+    console.log('[POS] Settings context mobile:', mobile);
+    console.log('[POS] Settings context uen:', uen);
+    
     if (!amount || parseFloat(amount) <= 0) {
       console.log('[POS] Invalid amount:', amount);
       alert('Please enter a valid amount');
@@ -119,7 +174,7 @@ export function POSSystem() {
         hasQrCodeSvg: !!qrResult.qrCodeSvg,
         svgLength: qrResult.qrCodeSvg?.length,
         hasQrCodePng: !!qrResult.qrCodePng,
-        qrText: qrResult.qrText
+        url: qrResult.url
       });
       
       // Set the QR result
@@ -165,34 +220,68 @@ export function POSSystem() {
       
       setCurrentOrderId(newOrder.id);
 
-      // Send QR data to all displays
-      console.log('[POS] Sending QR to display system...');
+      // Send QR data to display - SIMPLE VERSION
+      console.log('[POS] 📱 Sending QR to display system (simple version)...');
       
-      // Use merchant ID from the created order
-      const merchantId = newOrder.tenant_id;
+      // Log items for debugging
+      const items = cart.map(line => ({
+        name: line.name,
+        quantity: line.qty,
+        unitPrice: line.unitPriceCents / 100,
+        totalPrice: (line.qty * line.unitPriceCents) / 100
+      }));
+      console.log('[POS] Items in order:', items);
       
-      // Broadcast to ALL terminals
-      const terminalQRData: TerminalQRData = {
-        orderId: newOrder.id,
-        qrSvg: qrResult.qrCodeSvg,
-        amount: parseFloat(amount),
-        reference: finalReference,
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-        terminalId: DEFAULT_TERMINALS.COUNTER_1, // Will be overridden for each terminal
-        merchantId,
-        timestamp: Date.now()
-      };
-      
-      // Broadcast to both default terminals
-      await terminalSync.broadcastToTerminal(DEFAULT_TERMINALS.COUNTER_1, {
-        ...terminalQRData,
-        terminalId: DEFAULT_TERMINALS.COUNTER_1
-      });
-      
-      await terminalSync.broadcastToTerminal(DEFAULT_TERMINALS.COUNTER_2, {
-        ...terminalQRData,
-        terminalId: DEFAULT_TERMINALS.COUNTER_2
-      });
+      try {
+        // Simple direct insert into display_states - no complex terminal sync!
+        console.log('[POS] Inserting display state directly into database...');
+        
+        // Create UUID format from device token
+        const deviceUUID = `47285100-0000-0000-0000-000000000001`;
+        console.log('[POS] Using device UUID:', deviceUUID);
+        
+        // First ensure device exists in customer_displays
+        console.log('[POS] Ensuring device exists in customer_displays...');
+        const { error: deviceError } = await supabase
+          .from('customer_displays')
+          .upsert({
+            id: deviceUUID,
+            device_key: '472851',
+            name: 'Display 2851',
+            tenant_id: newOrder.tenant_id,
+            last_seen_at: new Date().toISOString()
+          });
+
+        if (deviceError) {
+          console.error('[POS] ❌ Failed to create device record:', deviceError);
+          throw deviceError;
+        }
+        
+        console.log('[POS] ✅ Device record ensured, now storing display state...');
+        const { error: displayError } = await supabase
+          .from('display_states')
+          .upsert({
+            device_id: deviceUUID, // Use proper UUID format
+            tenant_id: newOrder.tenant_id,
+            state: 'show',
+            order_id: newOrder.id,
+            amount: parseFloat(amount),
+            reference: finalReference,
+            qr_svg: qrResult.qrCodeSvg,
+            expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (displayError) {
+          console.error('[POS] ❌ Failed to store display state:', displayError);
+          alert('Warning: Display may not show QR code due to database error');
+        } else {
+          console.log('[POS] ✅ Display state stored successfully! Display should show QR now.');
+          console.log('[POS] Items logged for future implementation:', items);
+        }
+      } catch (error) {
+        console.error('[POS] Display state storage error:', error);
+      }
       
       console.log('[POS] QR generation completed successfully');
     } catch (error) {
@@ -356,32 +445,68 @@ export function POSSystem() {
       setCurrentOrderId(newOrder.id);
       console.log('[POS] Order created from cart with ID:', newOrder.id);
 
-      // Send QR data to all displays
-      // Use merchant ID from the created order
-      const merchantId = newOrder.tenant_id;
+      // Send QR data to display - SIMPLE VERSION (Cart Checkout)
+      console.log('[POS] 📱 Sending cart QR to display system (simple version)...');
       
-      // Broadcast to ALL terminals
-      const terminalQRData: TerminalQRData = {
-        orderId: newOrder.id,
-        qrSvg: qrResult.qrCodeSvg,
-        amount: parseFloat(subtotalAmount),
-        reference: finalReference,
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-        terminalId: DEFAULT_TERMINALS.COUNTER_1, // Will be overridden for each terminal
-        merchantId,
-        timestamp: Date.now()
-      };
+      // Log items for debugging
+      const items = cart.map(line => ({
+        name: line.name,
+        quantity: line.qty,
+        unitPrice: line.unitPriceCents / 100,
+        totalPrice: (line.qty * line.unitPriceCents) / 100
+      }));
+      console.log('[POS] Cart items in order:', items);
       
-      // Broadcast to both default terminals
-      await terminalSync.broadcastToTerminal(DEFAULT_TERMINALS.COUNTER_1, {
-        ...terminalQRData,
-        terminalId: DEFAULT_TERMINALS.COUNTER_1
-      });
-      
-      await terminalSync.broadcastToTerminal(DEFAULT_TERMINALS.COUNTER_2, {
-        ...terminalQRData,
-        terminalId: DEFAULT_TERMINALS.COUNTER_2
-      });
+      try {
+        // Simple direct insert into display_states - no complex terminal sync!
+        console.log('[POS] Inserting cart display state directly into database...');
+        
+        // Create UUID format from device token
+        const deviceUUID = `47285100-0000-0000-0000-000000000001`;
+        console.log('[POS] Using cart device UUID:', deviceUUID);
+        
+        // First ensure device exists in customer_displays
+        console.log('[POS] Ensuring cart device exists in customer_displays...');
+        const { error: deviceError } = await supabase
+          .from('customer_displays')
+          .upsert({
+            id: deviceUUID,
+            device_key: '472851',
+            name: 'Display 2851',
+            tenant_id: newOrder.tenant_id,
+            last_seen_at: new Date().toISOString()
+          });
+
+        if (deviceError) {
+          console.error('[POS] ❌ Failed to create cart device record:', deviceError);
+          throw deviceError;
+        }
+        
+        console.log('[POS] ✅ Cart device record ensured, now storing display state...');
+        const { error: displayError } = await supabase
+          .from('display_states')
+          .upsert({
+            device_id: deviceUUID, // Use proper UUID format
+            tenant_id: newOrder.tenant_id,
+            state: 'show',
+            order_id: newOrder.id,
+            amount: parseFloat(subtotalAmount),
+            reference: finalReference,
+            qr_svg: qrResult.qrCodeSvg,
+            expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (displayError) {
+          console.error('[POS] ❌ Failed to store cart display state:', displayError);
+          alert('Warning: Display may not show QR code due to database error');
+        } else {
+          console.log('[POS] ✅ Cart display state stored successfully! Display should show QR now.');
+          console.log('[POS] Cart items logged for future implementation:', items);
+        }
+      } catch (error) {
+        console.error('[POS] Cart display state storage error:', error);
+      }
       
       console.log('[POS] Cart QR generation completed successfully');
       

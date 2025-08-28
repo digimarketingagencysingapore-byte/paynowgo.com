@@ -7,7 +7,7 @@ import { EditMerchantModal } from './EditMerchantModal';
 import { CMSEditor } from './CMSEditor';
 import { MerchantsDB, needsAdminMigration, migrateAdminData, AdminUsersDB } from '../../lib/admin-database';
 import type { Merchant } from '../../lib/admin-database';
-import type { AuthUser } from '../../../types';
+import type { AuthUser } from '@/@types';
 
 interface AdminDashboardProps {
   currentUser: AuthUser;

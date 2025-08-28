@@ -3,7 +3,7 @@ import { AdminLoginForm } from '../components/auth/AdminLoginForm';
 import { AdminDashboard } from '../components/admin/AdminDashboard';
 import { AdminUsersDB } from '../lib/admin-database';
 import { authHelpers } from '../lib/supabase';
-import type { AuthUser } from '../../types';
+import type { AuthUser } from '@/@types';
 
 export function AdminLogin() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);

@@ -5,8 +5,9 @@ import { X, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { StoredItem as Item, StoredCategory as ItemCategory } from '@/lib/storage';
+import { StoredItem as Item, StoredCategory as ItemCategory } from '@/@types';
 import { formatCentsToPrice, isValidPrice } from '@/lib/money';
+import { getAvailableTenantOptions, type TenantOption } from '@/lib/tenant-service';
 
 interface ItemFormProps {
   isOpen: boolean;
@@ -22,10 +23,13 @@ export function ItemForm({ isOpen, onClose, onSubmit, item, categories, isLoadin
     name: '',
     price: '',
     categoryId: '',
+    tenantId: '',
     active: true,
     sku: ''
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
+  const [isLoadingTenants, setIsLoadingTenants] = useState(false);
 
   useEffect(() => {
     if (item) {
@@ -33,6 +37,7 @@ export function ItemForm({ isOpen, onClose, onSubmit, item, categories, isLoadin
         name: item.name,
         price: formatCentsToPrice(item.price_cents),
         categoryId: item.categoryId || '',
+        tenantId: item.tenantId || '',
         active: item.active,
         sku: item.sku || ''
       });
@@ -41,12 +46,40 @@ export function ItemForm({ isOpen, onClose, onSubmit, item, categories, isLoadin
         name: '',
         price: '',
         categoryId: '',
+        tenantId: '',
         active: true,
         sku: ''
       });
     }
     setErrors({});
   }, [item, isOpen]);
+
+  // Load tenant options when form opens
+  useEffect(() => {
+    if (isOpen && tenantOptions.length === 0) {
+      loadTenantOptions();
+    }
+  }, [isOpen]);
+
+  const loadTenantOptions = async () => {
+    try {
+      setIsLoadingTenants(true);
+      console.log('[ITEM_FORM] Loading tenant options...');
+      const options = await getAvailableTenantOptions();
+      setTenantOptions(options);
+      
+      // Set default tenant if creating new item and no tenant selected
+      if (!item && !formData.tenantId && options.length > 0) {
+        setFormData(prev => ({ ...prev, tenantId: options[0].id }));
+      }
+      
+      console.log('[ITEM_FORM] Tenant options loaded:', options.length);
+    } catch (error) {
+      console.error('[ITEM_FORM] Failed to load tenant options:', error);
+    } finally {
+      setIsLoadingTenants(false);
+    }
+  };
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -67,6 +100,10 @@ export function ItemForm({ isOpen, onClose, onSubmit, item, categories, isLoadin
       newErrors.sku = 'SKU too long (max 20 characters)';
     }
 
+    if (!formData.tenantId) {
+      newErrors.tenantId = 'Please select a tenant/organization';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -82,6 +119,7 @@ export function ItemForm({ isOpen, onClose, onSubmit, item, categories, isLoadin
       name: formData.name.trim(),
       price: formData.price.trim(),
       categoryId: formData.categoryId || null,
+      tenantId: formData.tenantId,
       active: formData.active,
       sku: formData.sku.trim() || null
     };
@@ -146,6 +184,37 @@ export function ItemForm({ isOpen, onClose, onSubmit, item, categories, isLoadin
             {errors.price && (
               <p className="text-sm text-red-600 mt-1">{errors.price}</p>
             )}
+          </div>
+
+          {/* Tenant/Organization */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Tenant/Organization *
+            </label>
+            <select
+              value={formData.tenantId}
+              onChange={(e) => handleChange('tenantId', e.target.value)}
+              className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 ${
+                errors.tenantId ? 'border-red-500' : 'border-gray-300'
+              }`}
+              disabled={isLoadingTenants}
+            >
+              <option value="">Select tenant...</option>
+              {tenantOptions.map((tenant) => (
+                <option key={tenant.id} value={tenant.id}>
+                  {tenant.name} {tenant.source === 'order' && `(${tenant.orderCount} orders)`}
+                </option>
+              ))}
+            </select>
+            {isLoadingTenants && (
+              <p className="text-sm text-gray-500 mt-1">Loading tenant options...</p>
+            )}
+            {errors.tenantId && (
+              <p className="text-sm text-red-600 mt-1">{errors.tenantId}</p>
+            )}
+            <p className="text-xs text-gray-500 mt-1">
+              Items are organized by tenant/organization for multi-location merchants
+            </p>
           </div>
 
           {/* Category */}

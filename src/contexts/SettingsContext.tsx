@@ -20,6 +20,7 @@ interface SettingsContextType {
   setNotifications: (enabled: boolean) => void;
   currentMerchant: any;
   setCurrentMerchant: (merchant: any) => void;
+  reloadMerchantData: () => Promise<void>;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
@@ -87,13 +88,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         subscriptionLink: merchant.subscription_link
       };
       
-      console.log('[SETTINGS_CONTEXT] Merchant data loaded from database:', {
+      console.log('[SETTINGS_CONTEXT] ===== MERCHANT DATA LOADED =====');
+      console.log('[SETTINGS_CONTEXT] Raw merchant from DB:', merchant);
+      console.log('[SETTINGS_CONTEXT] Processed merchant data:', {
         businessName: merchantData.businessName,
-        uen: merchantData.uen,
-        mobile: merchantData.mobile,
+        uen: `"${merchantData.uen}"`,
+        uenLength: merchantData.uen?.length,
+        mobile: `"${merchantData.mobile}"`,
         address: merchantData.address,
         id: merchantData.id
       });
+      console.log('[SETTINGS_CONTEXT] ===== END MERCHANT DATA =====');
       setCurrentMerchant(merchantData);
       
       // Set initial business type selection based on available payment methods
@@ -207,6 +212,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [referencePrefix, setReferencePrefix] = useState('TBL');
   const [notifications, setNotifications] = useState(true);
 
+  // Force reload merchant data from database
+  const reloadMerchantData = async () => {
+    console.log('[SETTINGS_CONTEXT] Force reloading merchant data...');
+    await loadMerchantFromSession();
+  };
+
   return (
     <SettingsContext.Provider value={{
       businessType,
@@ -226,7 +237,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       notifications,
       setNotifications,
       currentMerchant,
-      setCurrentMerchant
+      setCurrentMerchant,
+      reloadMerchantData
     }}>
       {children}
     </SettingsContext.Provider>

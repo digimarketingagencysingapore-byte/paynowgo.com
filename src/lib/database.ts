@@ -14,6 +14,7 @@ export interface StoredCategory {
 export interface StoredItem {
   id: string;
   tenantId: string;
+  profileId: string | null;
   categoryId: string | null;
   name: string;
   price_cents: number;
@@ -125,11 +126,13 @@ function createItemInLocalStorage(data: {
   categoryId?: string | null;
   active?: boolean;
   sku?: string | null;
+  tenantId?: string;
 }): StoredItem {
   const items: StoredItem[] = getFromStorage(STORAGE_KEYS.ITEMS, []);
   const newItem: StoredItem = {
     id: 'item-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-    tenantId: '00000000-0000-0000-0000-000000000001',
+    tenantId: data.tenantId || '00000000-0000-0000-0000-000000000001',
+    profileId: null, // LocalStorage fallback doesn't have profile support
     categoryId: data.categoryId || null,
     name: data.name,
     price_cents: Math.round(parseFloat(data.price) * 100),
@@ -162,6 +165,7 @@ function updateItemInLocalStorage(id: string, data: Partial<{
   if (data.categoryId !== undefined) updateData.categoryId = data.categoryId;
   if (data.active !== undefined) updateData.active = data.active;
   if (data.sku !== undefined) updateData.sku = data.sku;
+  // Keep existing profileId for localStorage items
   updateData.updatedAt = new Date().toISOString();
 
   items[index] = updateData;
@@ -177,6 +181,57 @@ function deleteItemFromLocalStorage(id: string): boolean {
   
   saveToStorage(STORAGE_KEYS.ITEMS, filteredItems);
   return true;
+}
+
+// Get current user's profile ID
+async function getCurrentProfileId(): Promise<string | null> {
+  try {
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !user) {
+      console.log('[DATABASE] No authenticated user found');
+      return null;
+    }
+    
+    return user.id;
+  } catch (error) {
+    console.error('[DATABASE] Error getting current profile ID:', error);
+    return null;
+  }
+}
+
+// Get current merchant ID from profile_id
+async function getCurrentMerchantId(): Promise<string> {
+  try {
+    console.log('[DATABASE] Getting current merchant ID...');
+    
+    // Get current user from Supabase
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !user) {
+      console.warn('[DATABASE] No authenticated user found:', userError);
+      throw new Error('User not authenticated');
+    }
+
+    // Get merchant data linked to this user's profile using simple nested query
+    const { data: merchant, error: merchantError } = await supabase
+      .from('merchants')
+      .select('id')
+      .eq('profile_id', user.id)
+      .single();
+      
+    if (merchantError || !merchant) {
+      console.warn('[DATABASE] No merchant found for user profile:', merchantError);
+      throw new Error('Merchant not found for current user');
+    }
+    
+    console.log('[DATABASE] Current merchant ID:', merchant.id);
+    return merchant.id;
+    
+  } catch (error) {
+    console.error('[DATABASE] Error getting current merchant ID:', error);
+    throw error;
+  }
 }
 
 /**
@@ -229,9 +284,12 @@ export const CategoriesAPI = {
   async getAll(): Promise<StoredCategory[]> {
     try {
       console.log('[CATEGORIES_API] Fetching from Supabase...');
+      const merchantId = await getCurrentMerchantId();
+      
       const { data, error } = await supabase
         .from('categories')
         .select('*')
+        .eq('tenant_id', merchantId) // Filter by current merchant
         .order('created_at', { ascending: false });
       
       if (error) throw error;
@@ -239,7 +297,7 @@ export const CategoriesAPI = {
       // Convert database format to StoredCategory format
       return (data || []).map((item: any) => ({
         id: item.id,
-        tenantId: item.tenant_id || '00000000-0000-0000-0000-000000000001',
+        tenantId: item.tenant_id || merchantId, // Should always be merchantId now
         name: item.name,
         position: item.position || 0,
         createdAt: item.created_at,
@@ -253,9 +311,11 @@ export const CategoriesAPI = {
 
   async create(data: { name: string; position?: number }): Promise<StoredCategory> {
     try {
+      const merchantId = await getCurrentMerchantId();
       const insertData = {
         name: data.name,
         position: data.position || 0,
+        tenant_id: merchantId, // Use current merchant ID as tenant_id
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
@@ -268,10 +328,12 @@ export const CategoriesAPI = {
       
       if (error) throw error;
       
+      console.log('[CATEGORIES_API] Category created successfully:', result);
+      
       // Convert database format to StoredCategory format
       return {
         id: result.id || '',
-        tenantId: result.tenant_id || '00000000-0000-0000-0000-000000000001',
+        tenantId: result.tenant_id || merchantId,
         name: result.name || '',
         position: result.position || 0,
         createdAt: result.created_at || '',
@@ -338,10 +400,21 @@ export const ItemsAPI = {
   }): Promise<StoredItem[]> {
     try {
       console.log('[ITEMS_API] Fetching from Supabase...');
+      const profileId = await getCurrentProfileId();
+      const merchantId = await getCurrentMerchantId();
+      
       let query = supabase
         .from('items')
         .select('*')
         .order('created_at', { ascending: false });
+      
+      // Filter by current user's profile_id
+      if (profileId) {
+        query = query.eq('profile_id', profileId);
+      }
+      
+      // Also filter by tenant_id (merchant_id) for extra safety
+      query = query.eq('tenant_id', merchantId);
       
       // Apply filters
       if (filters?.active !== undefined) {
@@ -368,7 +441,8 @@ export const ItemsAPI = {
       // Convert to StoredItem format
       return items.map((item: any) => ({
         id: item.id || '',
-        tenantId: item.tenant_id || '00000000-0000-0000-0000-000000000001',
+        tenantId: item.tenant_id || merchantId, // Should always be merchantId now
+        profileId: item.profile_id,
         categoryId: null, // No category support in current schema
         name: item.name || '',
         price_cents: item.price_cents || 0,
@@ -390,11 +464,16 @@ export const ItemsAPI = {
     categoryId?: string | null;
     active?: boolean;
     sku?: string | null;
+    tenantId?: string;
   }): Promise<StoredItem> {
     try {
+      const profileId = await getCurrentProfileId();
+      const merchantId = await getCurrentMerchantId();
       const priceInCents = Math.round(parseFloat(data.price) * 100);
+      
       const insertData = {
-        tenant_id: '00000000-0000-0000-0000-000000000001',
+        tenant_id: merchantId, // Use current merchant ID, ignore UI tenant selection
+        profile_id: profileId,
         name: data.name,
         price_cents: priceInCents,
         currency: 'SGD',
@@ -422,7 +501,8 @@ export const ItemsAPI = {
       // Convert to StoredItem format
       return {
         id: result.id || '',
-        tenantId: result.tenant_id || '00000000-0000-0000-0000-000000000001',
+        tenantId: result.tenant_id || merchantId,
+        profileId: result.profile_id,
         categoryId: null,
         name: result.name || '',
         price_cents: result.price_cents || 0,
@@ -472,10 +552,11 @@ export const ItemsAPI = {
       
       console.log('[ITEMS_API] Item updated successfully:', result);
       
-      // Convert to StoredItem format
+      // Convert to StoredItem format  
       return {
         id: result.id || '',
-        tenantId: result.tenant_id || '00000000-0000-0000-0000-000000000001',
+        tenantId: result.tenant_id || result.tenant_id, // Keep original tenant_id
+        profileId: result.profile_id,
         categoryId: null,
         name: result.name || '',
         price_cents: result.price_cents || 0,

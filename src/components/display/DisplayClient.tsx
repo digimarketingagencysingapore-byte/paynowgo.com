@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LogOut, Wifi, WifiOff, Smartphone, RefreshCw, Eye, EyeOff, AlertTriangle } from 'lucide-react';
-import { MerchantQREventsAPI } from '../../lib/merchant-database';
-import { terminalSync, getTerminalIdFromDeviceKey, type TerminalQRData } from '../../lib/terminal-sync';
+import { supabase } from '../../lib/supabase';
 
 interface Device {
   id: string;
@@ -17,6 +16,13 @@ interface BootstrapResponse {
   };
 }
 
+interface DisplayOrderItem {
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
 interface DisplayState {
   mode: 'idle' | 'show';
   qrSvg?: string;
@@ -24,6 +30,7 @@ interface DisplayState {
   reference?: string;
   orderId?: string;
   expiresAt?: string;
+  items?: DisplayOrderItem[];
 }
 
 interface DebugState {
@@ -56,6 +63,8 @@ interface DisplaySnapshot {
   };
 }
 
+// Removed ensureTerminalExists - using simple approach
+
 export function DisplayClient() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [device, setDevice] = useState<Device | null>(null);
@@ -63,9 +72,6 @@ export function DisplayClient() {
   const [displayState, setDisplayState] = useState<DisplayState>({ mode: 'idle' });
   const [isLoading, setIsLoading] = useState(true);
   const [merchantId, setMerchantId] = useState<string | null>(null);
-  const [terminalId, setTerminalId] = useState<string | null>(null);
-
-  const qrSubscriptionRef = useRef<(() => void) | null>(null);
 
   // Bootstrap device with server
   const bootstrapDevice = async (deviceKey: string): Promise<BootstrapResponse | null> => {
@@ -107,13 +113,15 @@ export function DisplayClient() {
           amount: qrData.amount,
           reference: qrData.reference
         });
+        console.log('[DISPLAY] Items in QR data from loadCurrentQR:', qrData.items); // Log items for debugging
         setDisplayState({
           mode: 'show',
           qrSvg: qrData.qrSvg,
           amount: qrData.amount,
           reference: qrData.reference,
           orderId: qrData.orderId,
-          expiresAt: qrData.expiresAt
+          expiresAt: qrData.expiresAt,
+          items: qrData.items
         });
       } else {
         console.log('[DISPLAY] No active QR data, setting idle');
@@ -142,13 +150,7 @@ export function DisplayClient() {
       localStorage.setItem('deviceKey', deviceKey);
       
       // Extract merchant ID from device key or use default
-      // In a real system, you'd look up the merchant ID from the device key
       setMerchantId('00000000-0000-0000-0000-000000000001'); // Demo merchant
-      
-      // Get terminal ID from device key
-      const terminalId = getTerminalIdFromDeviceKey(deviceKey);
-      setTerminalId(terminalId);
-      console.log('[DISPLAY] Terminal ID for device key', deviceKey, ':', terminalId);
       
       handleAutoLogin(deviceKey);
     } else {
@@ -156,11 +158,7 @@ export function DisplayClient() {
       setIsLoading(false);
     }
 
-    return () => {
-      if (qrSubscriptionRef.current) {
-        qrSubscriptionRef.current();
-      }
-    };
+    // No cleanup needed for simple approach
   }, []);
 
   const handleAutoLogin = async (deviceKey: string) => {
@@ -195,54 +193,65 @@ export function DisplayClient() {
       
       console.log('[DISPLAY] Direct login successful:', deviceInfo.name);
       
-      // Load initial QR data
+      // Skip terminal creation - using simple approach
+      
+      // Load initial QR data - SIMPLE VERSION
       try {
-        const terminalId = getTerminalIdFromDeviceKey(deviceKey);
-        const currentQR = await terminalSync.getCurrentTerminalState(terminalId);
+        // Create same UUID format as POS uses
+        const deviceUUID = `47285100-0000-0000-0000-000000000001`;
+        console.log('[DISPLAY] Looking for QR data with device UUID:', deviceUUID);
         
-        if (currentQR) {
-          console.log('[DISPLAY] Setting initial QR state from terminal:', terminalId);
-          setDisplayState({
-            mode: 'show',
-            qrSvg: currentQR.qrSvg,
-            amount: currentQR.amount,
-            reference: currentQR.reference,
-            orderId: currentQR.orderId,
-            expiresAt: currentQR.expiresAt
-          });
+        // Simple direct query to display_states
+        const { data: displayState, error } = await supabase
+          .from('display_states')
+          .select('*')
+          .eq('device_id', deviceUUID)
+          .eq('state', 'show')
+          .maybeSingle();
+        
+        if (error) {
+          console.log('[DISPLAY] Error loading display state:', error);
+          setDisplayState({ mode: 'idle' });
+          return;
+        }
+        
+        if (displayState && displayState.qr_svg) {
+          // Check if still valid
+          if (!displayState.expires_at || new Date(displayState.expires_at) > new Date()) {
+            console.log('[DISPLAY] ✅ Found active QR data!');
+            console.log('[DISPLAY] Order:', displayState.order_id, 'Amount:', displayState.amount, 'Reference:', displayState.reference);
+            setDisplayState({
+              mode: 'show',
+              qrSvg: displayState.qr_svg,
+              amount: displayState.amount,
+              reference: displayState.reference,
+              orderId: displayState.order_id,
+              expiresAt: displayState.expires_at,
+              items: [] // Items will be logged by POS for now
+            });
+          } else {
+            console.log('[DISPLAY] QR data expired, showing idle');
+            setDisplayState({ mode: 'idle' });
+          }
         } else {
-          console.log('[DISPLAY] No active QR for terminal:', terminalId);
+          console.log('[DISPLAY] No active QR data found, showing idle');
           setDisplayState({ mode: 'idle' });
         }
       } catch (qrError) {
-        console.log('[DISPLAY] QR data load failed, starting with idle state');
+        console.log('[DISPLAY] QR data load failed:', qrError);
         setDisplayState({ mode: 'idle' });
       }
       
-      // Subscribe to terminal-specific QR events
-      const terminalId = getTerminalIdFromDeviceKey(deviceKey);
-      qrSubscriptionRef.current = terminalSync.subscribeToTerminal(terminalId, (qrData: TerminalQRData | null) => {
-        console.log('[DISPLAY] Terminal QR event received for', terminalId, ':', qrData ? 'SHOW' : 'HIDE');
-        
-        if (qrData) {
-          setDisplayState({
-            mode: 'show',
-            qrSvg: qrData.qrSvg,
-            amount: qrData.amount,
-            reference: qrData.reference,
-            orderId: qrData.orderId,
-            expiresAt: qrData.expiresAt
-          });
-        } else {
-          setDisplayState({ mode: 'idle' });
-        }
-      });
+      // Skip terminal subscription - using simple approach
+      console.log('[DISPLAY] Skipping terminal subscription - using simple direct query approach');
       
       // Clean URL
       const newUrl = new URL(window.location.href);
       newUrl.searchParams.delete('token');
       newUrl.searchParams.delete('k');
       window.history.replaceState({}, '', newUrl.toString());
+      
+      console.log('[DISPLAY] Auto-login process completed successfully');
       
     } catch (error) {
       console.error('[DISPLAY] Auto-login failed:', error);
@@ -273,10 +282,7 @@ export function DisplayClient() {
       setDisplayState({ mode: 'idle' });
       console.log('[DISPLAY] Logged out successfully');
       
-      // Cleanup subscription
-      if (qrSubscriptionRef.current) {
-        qrSubscriptionRef.current();
-      }
+      // No subscription cleanup needed
       
       window.location.href = '/';
     }
@@ -351,20 +357,15 @@ export function DisplayClient() {
         {displayState.mode === 'show' ? (
           // Show QR code content
           <>
-            {console.log('[DISPLAY] Rendering QR mode with state:', displayState)}
             {/* QR Code Container - Responsive sizing */}
             <div className="inline-block p-6 bg-white rounded-3xl shadow-2xl mb-8 border-4 border-purple-200">
               {displayState.qrSvg ? (
-                <>
-                  {console.log('[DISPLAY] Rendering QR SVG, length:', displayState.qrSvg.length)}
                 <div 
                   className="w-[80vmin] max-w-[400px] aspect-square [&>svg]:w-full [&>svg]:h-full"
                   dangerouslySetInnerHTML={{ __html: displayState.qrSvg }}
                 />
-                </>
               ) : (
                 <div className="w-64 h-64 md:w-80 md:h-80 bg-gray-100 rounded-xl flex items-center justify-center">
-                  {console.log('[DISPLAY] No QR SVG available')}
                   <div className="text-center">
                     <AlertTriangle className="w-8 h-8 text-red-500 mx-auto mb-2" />
                     <span className="text-gray-500">QR Code Error</span>
@@ -399,7 +400,6 @@ export function DisplayClient() {
         ) : (
           // Show idle state
           <>
-            {console.log('[DISPLAY] Rendering idle mode')}
           <div className="flex flex-col items-center justify-center">
             <div className="w-32 h-32 md:w-40 md:h-40 bg-gray-100 rounded-full flex items-center justify-center mb-6">
               <svg className="w-16 h-16 md:w-20 md:h-20 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

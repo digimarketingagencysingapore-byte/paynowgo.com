@@ -15,7 +15,7 @@ import { OrderProvider } from "./contexts/OrderContext";
 import { PaymentProvider } from "./contexts/PaymentContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { supabase } from "./lib/supabase";
-import type { AuthUser } from "../types";
+import type { AuthUser } from "@/@types";
 
 export type Page =
   | "dashboard"

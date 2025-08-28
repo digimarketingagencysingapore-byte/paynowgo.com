@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { StoredItem as Item, StoredCategory as ItemCategory } from '@/lib/storage';
+import { StoredItem as Item, StoredCategory as ItemCategory } from '@/@types';
 import { formatCentsToSGD } from '@/lib/money';
 import { ItemsAPI, CategoriesAPI } from '@/lib/storage';
 
