@@ -3,6 +3,7 @@ import { Search, Filter, Download, RefreshCw, CheckCircle, Clock, AlertCircle, F
 import { useOrderContext } from '../../contexts/OrderContext';
 import { OrderDetailsModal } from '../orders/OrderDetailsModal';
 import { exportToCSV, exportToExcel, generateFilename, getOrdersSummary } from '../../utils/exportUtils';
+import { PersistentOrdersAPI } from '../../lib/persistent-orders';
 
 export function Orders() {
   const { orders, updateOrderStatus, markOrderPaid, deleteOrder } = useOrderContext();
@@ -73,14 +74,26 @@ export function Orders() {
     setIsDetailsModalOpen(false);
   };
 
-  const handleMarkPaidFromModal = (orderId: string) => {
-    updateOrderStatus(orderId, 'paid');
-    handleCloseDetails();
+  const handleMarkPaidFromModal = async (orderId: string) => {
+    try {
+      await PersistentOrdersAPI.markOrderPaid(orderId);
+      updateOrderStatus(orderId, 'paid');
+      handleCloseDetails();
+    } catch (error) {
+      console.error('Failed to mark order as paid:', error);
+      alert('Failed to mark order as paid: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
   };
 
-  const handleMarkFailedFromModal = (orderId: string) => {
-    updateOrderStatus(orderId, 'failed');
-    handleCloseDetails();
+  const handleMarkFailedFromModal = async (orderId: string) => {
+    try {
+      await PersistentOrdersAPI.cancelOrder(orderId);
+      updateOrderStatus(orderId, 'failed');
+      handleCloseDetails();
+    } catch (error) {
+      console.error('Failed to mark order as failed:', error);
+      alert('Failed to mark order as failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
   };
 
   return (
@@ -225,13 +238,29 @@ export function Orders() {
                           <span>View</span>
                         </button>
                         <button
-                          onClick={() => markOrderPaid(order.reference)}
+                          onClick={async () => {
+                            try {
+                              await PersistentOrdersAPI.markOrderPaid(order.id);
+                              updateOrderStatus(order.id, 'paid');
+                            } catch (error) {
+                              console.error('Failed to mark order as paid:', error);
+                              alert('Failed to mark order as paid: ' + (error instanceof Error ? error.message : 'Unknown error'));
+                            }
+                          }}
                           className="text-emerald-600 hover:text-emerald-900 text-xs px-2 py-1 bg-emerald-50 hover:bg-emerald-100 rounded"
                         >
                           Mark Paid
                         </button>
                         <button
-                          onClick={() => updateOrderStatus(order.id, 'failed')}
+                          onClick={async () => {
+                            try {
+                              await PersistentOrdersAPI.cancelOrder(order.id);
+                              updateOrderStatus(order.id, 'failed');
+                            } catch (error) {
+                              console.error('Failed to mark order as failed:', error);
+                              alert('Failed to mark order as failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
+                            }
+                          }}
                           className="text-red-600 hover:text-red-900 text-xs px-2 py-1 bg-red-50 hover:bg-red-100 rounded"
                         >
                           Mark Failed
