@@ -51,79 +51,98 @@ function App() {
 
   // Check authentication on mount
   React.useEffect(() => {
-    console.log("[APP] Initializing app and checking Supabase session...");
+    console.log("[APP] ===== INITIALIZING AUTHENTICATION =====");
     console.log("[APP] Environment:", window.location.hostname);
-
-    checkSupabaseSession();
-
-    // Timeout fallback to prevent infinite loading
-    const loadingTimeout = setTimeout(() => {
-      console.warn('[APP] Loading timeout reached, forcing loading state to false');
+    console.log("[APP] Current path:", window.location.pathname);
+    console.log("[APP] Subdomain:", subdomain);
+    
+    // Safety timeout to prevent infinite loading
+    const safetyTimeout = setTimeout(() => {
+      console.warn("[APP] Safety timeout - forcing loading state to false");
       setIsLoading(false);
-    }, 10000); // 10 second timeout
+    }, 3000);
 
-    // Listen for auth state changes
+    // Listen for auth state changes - this will handle both initial session and future changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("[APP] Auth state changed:", event, session?.user?.id);
+      console.log("[APP] ===== AUTH STATE CHANGE =====");
+      console.log("[APP] Event:", event);
+      console.log("[APP] Has session:", !!session);
+      console.log("[APP] Has user:", !!session?.user);
 
-      if (event === "SIGNED_IN" && session?.user) {
-        await handleAuthUser(session.user);
-      } else if (event === "SIGNED_OUT") {
-        handleSignOut();
-        setIsLoading(false); // Ensure loading is cleared on signout
-      } else {
-        // Handle other auth events (TOKEN_REFRESHED, etc.)
-        console.log("[APP] Other auth event, clearing loading state");
+      clearTimeout(safetyTimeout);
+
+      try {
+        if (session?.user) {
+          console.log("[APP] Session found - processing user");
+          await handleAuthUser(session.user);
+        } else {
+          console.log("[APP] No session - clearing auth state");
+          setIsAuthenticated(false);
+          setUserType(null);
+          setCurrentUser(null);
+          setIsLoading(false);
+        }
+      } catch (error) {
+        console.error("[APP] Error in auth state change handler:", error);
         setIsLoading(false);
       }
     });
 
     return () => {
-      clearTimeout(loadingTimeout);
+      clearTimeout(safetyTimeout);
       subscription.unsubscribe();
     };
   }, []);
 
-  const checkSupabaseSession = async () => {
-    try {
-      console.log("[APP] Getting current Supabase session...");
-      const {
-        data: { session },
-        error,
-      } = await supabase.auth.getSession();
-
-      if (error) {
-        console.error("[APP] Error getting session:", error);
-        console.log("[APP] Setting loading to false due to session error");
-        setIsLoading(false);
-        return;
-      }
-
-      if (session?.user) {
-        console.log("[APP] Found active session for user:", session.user.id);
-        await handleAuthUser(session.user);
-      } else {
-        console.log("[APP] No active session found");
-        console.log("[APP] Setting loading to false - no session found");
-        setIsLoading(false);
-      }
-    } catch (error) {
-      console.error("[APP] Error checking session:", error);
-      console.log("[APP] Setting loading to false due to catch error");
-      setIsLoading(false);
-    }
-  };
 
   const handleAuthUser = async (user: any) => {
     try {
-      console.log("[APP] Processing authenticated user:", user.id, user.email);
+      console.log("[APP] ===== PROCESSING AUTHENTICATED USER =====");
+      console.log("[APP] User ID:", user.id);
+      console.log("[APP] User Email:", user.email);
 
-      // Get user profile to determine role with timeout
-      console.log("[APP] Querying profiles table...");
+      // Test Supabase connectivity first with timeout
+      console.log("[APP] Step 0: Testing Supabase connectivity...");
+      let supabaseWorking = false;
+      try {
+        const connectivityTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Connectivity test timeout')), 3000)
+        );
+        
+        const connectivityTest = supabase.from('profiles').select('count', { count: 'exact', head: true });
+        
+        await Promise.race([connectivityTest, connectivityTimeout]);
+        console.log("[APP] ✅ Supabase connectivity OK");
+        supabaseWorking = true;
+      } catch (connectError) {
+        console.error("[APP] ❌ Supabase connectivity failed:", connectError.message);
+        console.log("[APP] Will proceed with auth-only mode (no profile/merchant data)");
+        supabaseWorking = false;
+      }
+
+      // If Supabase is not working, use auth-only mode
+      if (!supabaseWorking) {
+        console.log("[APP] Setting up basic authenticated user (no database)");
+        setIsAuthenticated(true);
+        setUserType("merchant");
+        setCurrentUser({
+          id: user.id,
+          email: user.email!,
+        });
+        setIsLoading(false);
+        console.log("[APP] ===== AUTH COMPLETE (AUTH-ONLY MODE) =====");
+        return;
+      }
+
+      // Get user profile to determine role
+      console.log("[APP] Step 1: Loading user profile...");
+      const profileStart = Date.now();
+      
+      // Add timeout to prevent hanging
       const profileTimeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Profile query timeout')), 5000)
+        setTimeout(() => reject(new Error('Profile query timeout after 5 seconds')), 5000)
       );
       
       const profileQuery = supabase
@@ -131,40 +150,38 @@ function App() {
         .select("*")
         .eq("id", user.id)
         .single();
-
-      const { data: profile, error: profileError } = await Promise.race([
-        profileQuery,
-        profileTimeout
-      ]).catch((error: any) => {
-        console.error("[APP] Profile query failed:", error);
-        return { data: null, error };
-      }) as { data: any, error: any };
+      
+      let profile, profileError;
+      try {
+        const result = await Promise.race([profileQuery, profileTimeout]);
+        profile = result.data;
+        profileError = result.error;
+        console.log("[APP] Profile query took:", Date.now() - profileStart, "ms");
+        console.log("[APP] Profile result:", { profile: !!profile, error: profileError?.message });
+      } catch (error) {
+        console.error("[APP] Profile query failed or timed out:", error);
+        profileError = error;
+        profile = null;
+      }
 
       if (profileError || !profile) {
-        console.warn(
-          "[APP] Profile query failed or no profile found:",
-          profileError?.message || "No profile data"
-        );
-        console.log("[APP] Continuing with basic authentication (no profile)");
-        
-        // Continue without profile but with basic auth
+        console.warn("[APP] No profile found - setting up basic user:", profileError?.message);
+        console.log("[APP] Setting auth state for basic user and clearing loading");
         setIsAuthenticated(true);
-        setUserType("merchant"); // Default to merchant for routing
+        setUserType("merchant");
         setCurrentUser({
           id: user.id,
           email: user.email!,
         });
-
-        console.log("[APP] Setting loading to false - user without profile");
         setIsLoading(false);
+        console.log("[APP] ===== AUTH COMPLETE (BASIC USER) =====");
         return;
       }
 
-      console.log("[APP] Profile loaded:", profile.role);
+      console.log("[APP] Step 2: Profile loaded - role:", profile.role);
 
       if (profile.role === "admin") {
-        // Admin user
-        console.log("[APP] Setting up admin user");
+        console.log("[APP] Step 3: Setting up admin user");
         setIsAuthenticated(true);
         setUserType("admin");
         setCurrentUser({
@@ -178,101 +195,113 @@ function App() {
             updated_at: profile.updated_at,
           },
         });
-      } else {
-        // Regular user - try to get merchant data
-        console.log("[APP] Looking for merchant data for regular user");
-        console.log("[APP] Querying merchants table...");
-        const merchantTimeout = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Merchant query timeout')), 5000)
-        );
-        
-        const merchantQuery = supabase
-          .from("merchants")
-          .select("*")
-          .eq("profile_id", profile.id)
-          .single();
-
-        const { data: merchant, error: merchantError } = await Promise.race([
-          merchantQuery,
-          merchantTimeout
-        ]).catch((error: any) => {
-          console.error("[APP] Merchant query failed:", error);
-          return { data: null, error };
-        }) as { data: any, error: any };
-
-        if (merchantError || !merchant) {
-          console.warn(
-            "[APP] Merchant query failed or no merchant found:",
-            merchantError?.message || "No merchant data"
-          );
-          console.log("[APP] Continuing with profile but no merchant data");
-
-          // Still set as authenticated but without merchant data
-          setIsAuthenticated(true);
-          setUserType("merchant"); // Keep as merchant type for routing
-          setCurrentUser({
-            id: user.id,
-            email: user.email!,
-            profile: {
-              id: profile.id,
-              full_name: profile.full_name,
-              role: profile.role,
-              created_at: profile.created_at,
-              updated_at: profile.updated_at,
-            },
-          });
-          
-          console.log("[APP] Setting loading to false - user with profile but no merchant");
-          setIsLoading(false);
-          return;
-        } else {
-          console.log("[APP] Merchant loaded:", merchant.business_name);
-
-          const merchantUser: AuthUser = {
-            id: user.id,
-            email: user.email!,
-            profile: {
-              id: profile.id,
-              full_name: profile.full_name,
-              role: profile.role,
-              created_at: profile.created_at,
-              updated_at: profile.updated_at,
-            },
-            merchant: {
-              id: merchant.id,
-              businessName: merchant.business_name,
-              email: user.email!,
-              uen: merchant.uen,
-              mobile: merchant.mobile,
-              address: merchant.address,
-              status: merchant.status || "pending",
-              subscriptionPlan: merchant.subscription_plan,
-              monthlyRevenue: merchant.monthly_revenue,
-              subscriptionLink: merchant.subscription_link,
-            },
-          };
-
-          setIsAuthenticated(true);
-          setUserType("merchant");
-          setCurrentUser(merchantUser);
-        }
+        setIsLoading(false);
+        console.log("[APP] ===== AUTH COMPLETE (ADMIN USER) =====");
+        return;
       }
 
-      console.log("[APP] Setting loading to false - auth user processing complete");
+      // Regular user - get merchant data
+      console.log("[APP] Step 3: Loading merchant data for regular user...");
+      const merchantStart = Date.now();
+      
+      // Add timeout to prevent hanging
+      const merchantTimeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Merchant query timeout after 5 seconds')), 5000)
+      );
+      
+      const merchantQuery = supabase
+        .from("merchants")
+        .select("*")
+        .eq("profile_id", profile.id)
+        .single();
+      
+      let merchant, merchantError;
+      try {
+        const result = await Promise.race([merchantQuery, merchantTimeout]);
+        merchant = result.data;
+        merchantError = result.error;
+        console.log("[APP] Merchant query took:", Date.now() - merchantStart, "ms");
+        console.log("[APP] Merchant result:", { merchant: !!merchant, error: merchantError?.message });
+      } catch (error) {
+        console.error("[APP] Merchant query failed or timed out:", error);
+        merchantError = error;
+        merchant = null;
+      }
+
+      if (merchantError || !merchant) {
+        console.warn("[APP] No merchant found - setting up user with profile only:", merchantError?.message);
+        console.log("[APP] Setting auth state for profile user and clearing loading");
+        setIsAuthenticated(true);
+        setUserType("merchant");
+        setCurrentUser({
+          id: user.id,
+          email: user.email!,
+          profile: {
+            id: profile.id,
+            full_name: profile.full_name,
+            role: profile.role,
+            created_at: profile.created_at,
+            updated_at: profile.updated_at,
+          },
+        });
+        setIsLoading(false);
+        console.log("[APP] ===== AUTH COMPLETE (PROFILE USER) =====");
+        return;
+      }
+
+      console.log("[APP] Step 4: Merchant loaded:", merchant.business_name);
+      console.log("[APP] Step 5: Building merchant user object...");
+      
+      // Set up full merchant user
+      const merchantUser: AuthUser = {
+        id: user.id,
+        email: user.email!,
+        profile: {
+          id: profile.id,
+          full_name: profile.full_name,
+          role: profile.role,
+          created_at: profile.created_at,
+          updated_at: profile.updated_at,
+        },
+        merchant: {
+          id: merchant.id,
+          businessName: merchant.business_name,
+          email: user.email!,
+          uen: merchant.uen,
+          mobile: merchant.mobile,
+          address: merchant.address,
+          status: merchant.status || "pending",
+          subscriptionPlan: merchant.subscription_plan,
+          monthlyRevenue: merchant.monthly_revenue,
+          subscriptionLink: merchant.subscription_link,
+        },
+      };
+
+      console.log("[APP] Step 6: Setting authentication state...");
+      setIsAuthenticated(true);
+      setUserType("merchant");
+      setCurrentUser(merchantUser);
+      
+      console.log("[APP] Step 7: Clearing loading state...");
       setIsLoading(false);
+      
+      console.log("[APP] ✅ MERCHANT AUTHENTICATION SUCCESS");
+      console.log("[APP] Merchant:", merchant.business_name);
+      console.log("[APP] ===== AUTH COMPLETE (FULL MERCHANT) =====");
+      
     } catch (error) {
-      console.error("[APP] Error processing authenticated user:", error);
-      console.log("[APP] Setting loading to false due to auth user error");
+      console.error("[APP] ❌ AUTHENTICATION PROCESSING FAILED:", error);
+      console.log("[APP] Force clearing loading state due to error");
       setIsLoading(false);
     }
   };
 
   const handleSignOut = () => {
-    console.log("[APP] Handling sign out");
+    console.log("[APP] Handling sign out - clearing authentication state");
     setIsAuthenticated(false);
     setUserType(null);
     setCurrentUser(null);
-    setIsLoading(false); // Ensure loading state is cleared
+    setIsLoading(false);
   };
 
   const handleLoginSuccess = () => {
@@ -360,8 +389,12 @@ function App() {
     path === "/app" ||
     path.startsWith("/merchant")
   ) {
+    console.log("[APP] Merchant route detected - evaluating authentication...");
+    console.log("[APP] Auth state:", { isAuthenticated, userType, isLoading });
+    
     // Show loading state while checking authentication
     if (isLoading) {
+      console.log("[APP] Still loading - showing loading screen");
       return (
         <div className="min-h-screen bg-white flex items-center justify-center">
           <div className="text-center">
@@ -372,11 +405,14 @@ function App() {
       );
     }
     
-    return isAuthenticated && userType === "merchant" ? (
-      renderMerchantDashboard()
-    ) : (
-      <MerchantLogin onLoginSuccess={handleLoginSuccess} />
-    );
+    if (isAuthenticated && userType === "merchant") {
+      console.log("[APP] ✅ Authenticated merchant - rendering dashboard");
+      return renderMerchantDashboard();
+    } else {
+      console.log("[APP] ❌ Not authenticated - showing login form");
+      console.log("[APP] Redirect reason:", { isAuthenticated, userType });
+      return <MerchantLogin onLoginSuccess={handleLoginSuccess} />;
+    }
   }
 
   // Default to landing page for main domain (paynowgo.com) and all other cases
