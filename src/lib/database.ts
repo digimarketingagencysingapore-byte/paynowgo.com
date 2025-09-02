@@ -218,7 +218,6 @@ async function getCurrentMerchantId(): Promise<string> {
       .from('merchants')
       .select('id')
       .eq('profile_id', user.id)
-      .limit(1)
       .maybeSingle();
       
     if (merchantError || !merchant) {

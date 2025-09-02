@@ -66,7 +66,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         .from('merchants')
         .select('*')
         .eq('profile_id', user.id)
-        .limit(1)
         .maybeSingle();
         
       if (merchantError || !merchant) {
