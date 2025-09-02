@@ -362,7 +362,7 @@ export const CMSAPI = {
         
         // Deactivate current active version for this section
         const { error: deactivateError } = await supabase
-          .from('cms_content')
+          .from('website_content')
           .update({ active: false })
           .eq('section', section)
           .eq('active', true);
@@ -373,7 +373,7 @@ export const CMSAPI = {
         
         // Insert new active version
         const { error: insertError } = await supabase
-          .from('cms_content')
+          .from('website_content')
           .insert({
             section: section,
             content: sectionContent,

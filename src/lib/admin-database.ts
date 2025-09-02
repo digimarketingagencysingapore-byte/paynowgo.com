@@ -899,7 +899,7 @@ export const CMSDB = {
 
   async getAllContent(): Promise<Record<string, any>> {
     const { data, error } = await supabase
-      .from("cms_content")
+      .from("website_content")
       .select("section, content")
       .eq("active", true);
 
@@ -911,9 +911,9 @@ export const CMSDB = {
         error.message?.includes("schema cache") ||
         error.message?.includes("Could not find")
       ) {
-        throw new SupabaseTableNotFoundError("cms_content");
+        throw new SupabaseTableNotFoundError("website_content");
       }
-      console.warn("CMS content table error:", error);
+      console.warn("Website content table error:", error);
       return {};
     }
 
@@ -934,13 +934,13 @@ export const CMSDB = {
   ): Promise<void> {
     // Deactivate current version
     await supabase
-      .from("cms_content")
+      .from("website_content")
       .update({ active: false })
       .eq("section", section)
       .eq("active", true);
 
-    // Insert new version
-    const { error } = await supabase.from("cms_content").insert({
+    // Insert new version  
+    const { error } = await supabase.from("website_content").insert({
       section,
       content,
       created_by: adminId,
@@ -954,7 +954,7 @@ export const CMSDB = {
         error.message?.includes("table") ||
         error.message?.includes("schema cache")
       ) {
-        throw new SupabaseTableNotFoundError("cms_content");
+        throw new SupabaseTableNotFoundError("website_content");
       }
       console.error("Error saving CMS content:", error);
       throw new Error("Failed to save CMS content");
