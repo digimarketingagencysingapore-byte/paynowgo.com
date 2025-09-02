@@ -108,7 +108,7 @@ function App() {
       let supabaseWorking = false;
       try {
         const connectivityTimeout = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connectivity test timeout')), 10000)
+          setTimeout(() => reject(new Error('Connectivity test timeout')), 30000)
         );
         
         const connectivityTest = supabase.from('profiles').select('count', { count: 'exact', head: true });
@@ -142,14 +142,14 @@ function App() {
       
       // Add timeout to prevent hanging
       const profileTimeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Profile query timeout after 5 seconds')), 5000)
+        setTimeout(() => reject(new Error('Profile query timeout after 15 seconds')), 15000)
       );
       
       const profileQuery = supabase
         .from("profiles")
         .select("*")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
       
       let profile, profileError;
       try {
@@ -206,7 +206,7 @@ function App() {
       
       // Add timeout to prevent hanging
       const merchantTimeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Merchant query timeout after 5 seconds')), 5000)
+        setTimeout(() => reject(new Error('Merchant query timeout after 15 seconds')), 15000)
       );
       
       const merchantQuery = supabase
