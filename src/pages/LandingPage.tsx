@@ -8,6 +8,19 @@ export function LandingPage() {
   const [content, setContent] = React.useState(null);
   const [isLoading, setIsLoading] = React.useState(true);
 
+  // Fast loading optimization - show default content quickly
+  React.useEffect(() => {
+    const fastTimeout = setTimeout(() => {
+      if (!content) {
+        console.log('[LANDING_PAGE] Fast timeout - using default content');
+        setContent(getDefaultContent());
+        setIsLoading(false);
+      }
+    }, 1000);
+
+    return () => clearTimeout(fastTimeout);
+  }, []);
+
   // Load CMS content on mount
   React.useEffect(() => {
     console.log('[LANDING_PAGE] Loading CMS content...');
@@ -17,7 +30,15 @@ export function LandingPage() {
   const loadContent = async () => {
     try {
       console.log('[LANDING_PAGE] Calling CMSAPI.getContent()...');
-      const cmsContent = await CMSAPI.getContent();
+      
+      // Add timeout for CMS loading
+      const cmsTimeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('CMS loading timeout')), 3000)
+      );
+      
+      const cmsPromise = CMSAPI.getContent();
+      const cmsContent = await Promise.race([cmsPromise, cmsTimeout]);
+      
       console.log('[LANDING_PAGE] CMS content loaded:', cmsContent ? 'SUCCESS' : 'NULL');
       console.log('[LANDING_PAGE] Content sections:', cmsContent ? Object.keys(cmsContent) : 'none');
       setContent(cmsContent);
@@ -25,42 +46,74 @@ export function LandingPage() {
       console.error('Failed to load CMS content:', error);
       console.log('[LANDING_PAGE] Using fallback content due to error');
       // Use default content as fallback
-      setContent({
-        hero: {
-          title: 'Accept PayNow Payments Effortlessly',
-          subtitle: 'PayNow',
-          description: 'Complete Point-of-Sale system with Singapore PayNow integration.',
-          primaryButtonText: 'Start Free Trial',
-          primaryButtonLink: '/merchant',
-          primaryButtonVisible: true,
-          secondaryButtonText: 'View Demo',
-          secondaryButtonLink: '/display',
-          secondaryButtonVisible: true,
-          badgeText: "Singapore's #1 PayNow POS System"
-        },
-        features: { title: 'Features', subtitle: 'Built for Singapore', items: [] },
-        testimonials: { title: 'Testimonials', subtitle: 'Trusted by businesses', items: [] },
-        pricing: { title: 'Pricing', subtitle: 'Simple pricing', plans: [] },
-        cta: { 
-          title: 'Ready?', 
-          subtitle: 'Get started today', 
-          primaryButtonText: 'Start', 
-          primaryButtonLink: '/merchant',
-          primaryButtonVisible: true,
-          secondaryButtonText: 'Admin', 
-          secondaryButtonLink: '/admin',
-          secondaryButtonVisible: true
-        },
-        footer: { description: 'PayNow POS', copyright: '© 2025 PayNowGo', supportText: 'Singapore', navigationLinks: [], productLinks: [], supportLinks: [] },
-        navigation: { menuItems: [] },
-        testQR: { enabled: false, amount: 10, uen: '', reference: '', description: '' },
-        meta: { title: 'PayNowGo', description: 'PayNow POS', keywords: [] }
-      });
+      setContent(getDefaultContent());
     } finally {
       console.log('[LANDING_PAGE] Setting loading to false');
       setIsLoading(false);
     }
   };
+  
+  // Default content function for reuse
+  const getDefaultContent = () => ({
+    hero: {
+      title: 'Accept PayNow Payments Effortlessly',
+      subtitle: 'PayNow',
+      description: 'Complete Point-of-Sale system with Singapore PayNow integration.',
+      primaryButtonText: 'Start Free Trial',
+      primaryButtonLink: '/merchant',
+      primaryButtonVisible: true,
+      secondaryButtonText: 'View Demo',
+      secondaryButtonLink: '/display',
+      secondaryButtonVisible: true,
+      badgeText: "Singapore's #1 PayNow POS System",
+      certificationBadge: 'Singapore Certified',
+      features: ['No setup fees', '14-day free trial', 'Cancel anytime']
+    },
+    features: { 
+      title: 'Everything you need for modern payments', 
+      subtitle: 'Built specifically for Singapore businesses', 
+      items: [
+        { id: 'paynow', title: 'PayNow Integration', description: 'Generate Singapore PayNow QR codes instantly', icon: 'QrCode' },
+        { id: 'display', title: 'Customer Display', description: 'Dual-screen setup with customer-facing QR code display', icon: 'Smartphone' },
+        { id: 'analytics', title: 'Real-time Analytics', description: 'Track sales and monitor performance', icon: 'BarChart3' }
+      ]
+    },
+    testimonials: { 
+      title: 'Trusted by Singapore businesses', 
+      subtitle: 'Join hundreds of merchants already using PayNowGo', 
+      items: [
+        { id: 'sarah', name: 'Sarah Lim', business: 'Kopitiam Corner', rating: 5, text: 'PayNowGo transformed our payment process!' }
+      ]
+    },
+    pricing: { 
+      title: 'Simple, transparent pricing', 
+      subtitle: 'Choose the plan that fits your business needs', 
+      plans: [
+        { id: 'basic', name: 'Basic', price: 'S$29', period: '/month', description: 'Perfect for small businesses', features: ['Up to 500 transactions/month', 'PayNow integration'], popular: false, buttonText: 'Get Started', buttonLink: '/merchant', buttonVisible: true }
+      ]
+    },
+    cta: { 
+      title: 'Ready to modernize your payments?', 
+      subtitle: 'Join the PayNow revolution today', 
+      primaryButtonText: 'Start Free Trial', 
+      primaryButtonLink: '/merchant',
+      primaryButtonVisible: true,
+      secondaryButtonText: 'Admin Portal', 
+      secondaryButtonLink: '/admin',
+      secondaryButtonVisible: true
+    },
+    footer: { 
+      description: 'The complete PayNow POS solution for Singapore businesses', 
+      copyright: '© 2025 PayNowGo. All rights reserved.', 
+      supportText: 'Built for Singapore businesses', 
+      navigationLinks: [{ text: 'Home', href: '/' }], 
+      productLinks: [{ text: 'Features', href: '#features' }], 
+      supportLinks: [{ text: 'Contact Support', href: 'mailto:support@paynowgo.com' }]
+    },
+    navigation: { menuItems: [{ text: 'Features', href: '#features' }, { text: 'Pricing', href: '#pricing' }] },
+    testQR: { enabled: true, amount: 10, uen: '202323584D', reference: 'Test-Demo-001', description: 'Demo QR Code' },
+    meta: { title: 'PayNowGo - Singapore PayNow POS System', description: 'Complete Point-of-Sale system with Singapore PayNow integration', keywords: ['PayNow', 'Singapore', 'POS'] }
+  });
   
   // Icon mapping
   const iconMap = {

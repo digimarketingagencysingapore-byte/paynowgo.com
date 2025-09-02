@@ -331,11 +331,18 @@ export const CMSAPI = {
     console.log('[CMS_API] Getting content from Supabase...');
     
     try {
-      // Get all active content sections from Supabase
-      const { data, error } = await supabase
+      // Add timeout for fast loading
+      const timeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('CMS query timeout')), 2000)
+      );
+      
+      const query = supabase
         .from('website_content')
         .select('section, content')
         .eq('active', true);
+      
+      // Get all active content sections from Supabase
+      const { data, error } = await Promise.race([query, timeout]);
 
       if (error) {
         console.error('[CMS_API] Supabase query error:', error);

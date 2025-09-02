@@ -35,6 +35,16 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(true);
 
+  // Fast loading optimization - set initial timeout
+  React.useEffect(() => {
+    const fastTimeout = setTimeout(() => {
+      console.log("[APP] Fast timeout - forcing loading state to false after 2 seconds");
+      setIsLoading(false);
+    }, 2000);
+
+    return () => clearTimeout(fastTimeout);
+  }, []);
+
   const path = window.location.pathname;
   const hostname = window.location.hostname;
 
@@ -56,12 +66,6 @@ function App() {
     console.log("[APP] Current path:", window.location.pathname);
     console.log("[APP] Subdomain:", subdomain);
     
-    // Safety timeout to prevent infinite loading
-    const safetyTimeout = setTimeout(() => {
-      console.warn("[APP] Safety timeout - forcing loading state to false");
-      setIsLoading(false);
-    }, 3000);
-
     // Listen for auth state changes - this will handle both initial session and future changes
     const {
       data: { subscription },
@@ -71,7 +75,6 @@ function App() {
       console.log("[APP] Has session:", !!session);
       console.log("[APP] Has user:", !!session?.user);
 
-      clearTimeout(safetyTimeout);
 
       try {
         if (session?.user) {
@@ -91,7 +94,6 @@ function App() {
     });
 
     return () => {
-      clearTimeout(safetyTimeout);
       subscription.unsubscribe();
     };
   }, []);
@@ -108,10 +110,10 @@ function App() {
       let supabaseWorking = false;
       try {
         const connectivityTimeout = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connectivity test timeout')), 5000)
+          setTimeout(() => reject(new Error('Connectivity test timeout')), 1500)
         );
         
-        const connectivityTest = supabase.from('profiles').select('count', { count: 'exact', head: true });
+        const connectivityTest = supabase.from('profiles').select('id').limit(1);
         
         await Promise.race([connectivityTest, connectivityTimeout]);
         console.log("[APP] ✅ Supabase connectivity OK");
@@ -142,7 +144,7 @@ function App() {
       
       // Add timeout to prevent hanging
       const profileTimeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Profile query timeout after 5 seconds')), 5000)
+        setTimeout(() => reject(new Error('Profile query timeout after 2 seconds')), 2000)
       );
       
       const profileQuery = supabase
@@ -206,7 +208,7 @@ function App() {
       
       // Add timeout to prevent hanging
       const merchantTimeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Merchant query timeout after 5 seconds')), 5000)
+        setTimeout(() => reject(new Error('Merchant query timeout after 2 seconds')), 2000)
       );
       
       const merchantQuery = supabase
