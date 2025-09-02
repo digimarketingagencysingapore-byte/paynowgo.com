@@ -127,7 +127,7 @@ export const AdminUsersDB = {
           .from("profiles")
           .select("*")
           .eq("id", user.id)
-          .single();
+          .maybeSingle();
 
         console.log("[ADMIN_AUTH] Admin client profile fetch:", {
           profileData,
