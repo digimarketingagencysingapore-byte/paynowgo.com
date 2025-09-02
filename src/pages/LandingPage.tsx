@@ -10,15 +10,20 @@ export function LandingPage() {
 
   // Load CMS content on mount
   React.useEffect(() => {
+    console.log('[LANDING_PAGE] Loading CMS content...');
     loadContent();
   }, []);
 
   const loadContent = async () => {
     try {
+      console.log('[LANDING_PAGE] Calling CMSAPI.getContent()...');
       const cmsContent = await CMSAPI.getContent();
+      console.log('[LANDING_PAGE] CMS content loaded:', cmsContent ? 'SUCCESS' : 'NULL');
+      console.log('[LANDING_PAGE] Content sections:', cmsContent ? Object.keys(cmsContent) : 'none');
       setContent(cmsContent);
     } catch (error) {
       console.error('Failed to load CMS content:', error);
+      console.log('[LANDING_PAGE] Using fallback content due to error');
       // Use default content as fallback
       setContent({
         hero: {
@@ -27,20 +32,32 @@ export function LandingPage() {
           description: 'Complete Point-of-Sale system with Singapore PayNow integration.',
           primaryButtonText: 'Start Free Trial',
           primaryButtonLink: '/merchant',
+          primaryButtonVisible: true,
           secondaryButtonText: 'View Demo',
           secondaryButtonLink: '/display',
+          secondaryButtonVisible: true,
           badgeText: "Singapore's #1 PayNow POS System"
         },
         features: { title: 'Features', subtitle: 'Built for Singapore', items: [] },
         testimonials: { title: 'Testimonials', subtitle: 'Trusted by businesses', items: [] },
         pricing: { title: 'Pricing', subtitle: 'Simple pricing', plans: [] },
-        cta: { title: 'Ready?', subtitle: 'Get started today', primaryButtonText: 'Start', primaryButtonLink: '/merchant', secondaryButtonText: 'Admin', secondaryButtonLink: '/admin' },
+        cta: { 
+          title: 'Ready?', 
+          subtitle: 'Get started today', 
+          primaryButtonText: 'Start', 
+          primaryButtonLink: '/merchant',
+          primaryButtonVisible: true,
+          secondaryButtonText: 'Admin', 
+          secondaryButtonLink: '/admin',
+          secondaryButtonVisible: true
+        },
         footer: { description: 'PayNow POS', copyright: '© 2025 PayNowGo', supportText: 'Singapore', navigationLinks: [], productLinks: [], supportLinks: [] },
         navigation: { menuItems: [] },
         testQR: { enabled: false, amount: 10, uen: '', reference: '', description: '' },
         meta: { title: 'PayNowGo', description: 'PayNow POS', keywords: [] }
       });
     } finally {
+      console.log('[LANDING_PAGE] Setting loading to false');
       setIsLoading(false);
     }
   };

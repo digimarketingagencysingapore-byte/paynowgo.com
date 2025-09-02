@@ -875,6 +875,7 @@ export const CMSDB = {
         .select("content")
         .eq("section", section)
         .eq("active", true)
+        .order('created_at', { ascending: false })
         .maybeSingle();
 
       if (error) {
@@ -898,33 +899,48 @@ export const CMSDB = {
   },
 
   async getAllContent(): Promise<Record<string, any>> {
-    const { data, error } = await supabase
-      .from("cms_content")
-      .select("section, content")
-      .eq("active", true);
+    try {
+      console.log('[CMSDB] Getting all content from website_content table...');
+      
+      const { data, error } = await supabase
+        .from("website_content")
+        .select("section, content")
+        .eq("active", true)
+        .order('created_at', { ascending: false });
 
-    if (error) {
-      if (
-        error.code === "PGRST205" ||
-        error.code === "PGRST116" ||
-        error.message?.includes("table") ||
-        error.message?.includes("schema cache") ||
-        error.message?.includes("Could not find")
-      ) {
-        throw new SupabaseTableNotFoundError("cms_content");
+      if (error) {
+        console.error('[CMSDB] Supabase query error:', error);
+        if (
+          error.code === "PGRST205" ||
+          error.code === "PGRST116" ||
+          error.message?.includes("table") ||
+          error.message?.includes("schema cache") ||
+          error.message?.includes("Could not find")
+        ) {
+          throw new SupabaseTableNotFoundError("website_content");
+        }
+        console.warn("CMS content table error:", error);
+        return {};
       }
-      console.warn("CMS content table error:", error);
+
+      console.log('[CMSDB] Raw data from Supabase:', data);
+
+      const content: Record<string, any> = {};
+      (data || []).forEach((item) => {
+        if (item.section && item.content) {
+          content[item.section] = item.content;
+        }
+      });
+
+      console.log('[CMSDB] Processed content sections:', Object.keys(content));
+      return content;
+    } catch (error) {
+      console.error('[CMSDB] Error in getAllContent:', error);
+      if (error instanceof SupabaseTableNotFoundError) {
+        throw error;
+      }
       return {};
     }
-
-    const content: Record<string, any> = {};
-    (data || []).forEach((item) => {
-      if (item.section) {
-        content[item.section] = item.content;
-      }
-    });
-
-    return content;
   },
 
   async saveContent(
@@ -937,7 +953,7 @@ export const CMSDB = {
       
       // Deactivate current version
       const { error: deactivateError } = await supabase
-        .from("cms_content")
+        .from("website_content")
         .update({ active: false })
         .eq("section", section)
         .eq("active", true);
@@ -948,13 +964,15 @@ export const CMSDB = {
 
       // Insert new version
       const { error: insertError } = await supabase
-        .from("cms_content")
+        .from("website_content")
         .insert({
           section,
           content,
           active: true,
           version: 1,
-          created_by: adminId
+          created_by: adminId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         });
 
       if (insertError) {

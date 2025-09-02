@@ -331,22 +331,49 @@ export const CMSAPI = {
     console.log('[CMS_API] Getting content from Supabase...');
     
     try {
-      const cmsContent = await CMSDB.getAllContent();
+      // Get all active content sections from Supabase
+      const { data, error } = await supabase
+        .from('website_content')
+        .select('section, content')
+        .eq('active', true);
+
+      if (error) {
+        console.error('[CMS_API] Supabase query error:', error);
+        throw error;
+      }
+
+      console.log('[CMS_API] Raw data from Supabase:', data);
+
+      // Convert array to object
+      const cmsContent: Record<string, any> = {};
+      (data || []).forEach((item) => {
+        if (item.section && item.content) {
+          cmsContent[item.section] = item.content;
+        }
+      });
+
+      console.log('[CMS_API] Processed CMS content:', Object.keys(cmsContent));
       
       if (!cmsContent || Object.keys(cmsContent).length === 0) {
-        console.log('[CMS_API] No content in Supabase, using default');
+        console.log('[CMS_API] No content sections found in Supabase, using default');
         return DEFAULT_CONTENT;
       }
       
-      return {
+      // Merge with default content to ensure all sections exist
+      const mergedContent = {
         ...DEFAULT_CONTENT,
         ...cmsContent
+      };
+
+      console.log('[CMS_API] Final merged content sections:', Object.keys(mergedContent));
+      return {
+        ...mergedContent
       };
     } catch (error) {
       if (error instanceof SupabaseTableNotFoundError) {
         console.warn('CMS table not found, using default content:', error.message);
       } else {
-        console.error('Error loading CMS content from Supabase:', error);
+        console.error('[CMS_API] Error loading CMS content from Supabase:', error);
       }
       return DEFAULT_CONTENT;
     }
@@ -378,7 +405,9 @@ export const CMSAPI = {
             section: section,
             content: sectionContent,
             active: true,
-            version: 1
+            version: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
           });
         
         if (insertError) {
