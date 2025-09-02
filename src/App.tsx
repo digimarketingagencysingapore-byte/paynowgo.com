@@ -108,7 +108,7 @@ function App() {
       let supabaseWorking = false;
       try {
         const connectivityTimeout = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connectivity test timeout')), 3000)
+          setTimeout(() => reject(new Error('Connectivity test timeout')), 10000)
         );
         
         const connectivityTest = supabase.from('profiles').select('count', { count: 'exact', head: true });
