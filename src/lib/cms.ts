@@ -6,6 +6,7 @@
 
 import { CMSDB, migrateAdminDataToSupabase, needsAdminMigration } from './admin-database';
 import { SupabaseTableNotFoundError } from './admin-database';
+import { supabase } from './supabase';
 
 export interface CMSContent {
   // Hero Section
@@ -353,12 +354,51 @@ export const CMSAPI = {
 
   async saveContent(content: CMSContent): Promise<void> {
     console.log('[CMS_API] Saving content to Supabase...');
-    await CMSDB.saveAllContent(content);
+    
+    try {
+      // Save each section individually
+      for (const [section, sectionContent] of Object.entries(content)) {
+        console.log(`[CMS_API] Saving section: ${section}`);
+        
+        // Deactivate current active version for this section
+        const { error: deactivateError } = await supabase
+          .from('cms_content')
+          .update({ active: false })
+          .eq('section', section)
+          .eq('active', true);
+        
+        if (deactivateError) {
+          console.warn(`[CMS_API] Warning deactivating old content for ${section}:`, deactivateError);
+        }
+        
+        // Insert new active version
+        const { error: insertError } = await supabase
+          .from('cms_content')
+          .insert({
+            section: section,
+            content: sectionContent,
+            active: true,
+            version: 1
+          });
+        
+        if (insertError) {
+          console.error(`[CMS_API] Error saving section ${section}:`, insertError);
+          throw new Error(`Failed to save ${section}: ${insertError.message}`);
+        }
+        
+        console.log(`[CMS_API] Section ${section} saved successfully`);
+      }
+      
+      console.log('[CMS_API] All content saved successfully');
+    } catch (error) {
+      console.error('[CMS_API] Error saving content:', error);
+      throw error;
+    }
   },
 
   async resetToDefault(): Promise<void> {
     console.log('[CMS_API] Resetting content to default in Supabase...');
-    await CMSDB.saveAllContent(DEFAULT_CONTENT);
+    await this.saveContent(DEFAULT_CONTENT);
   },
 
   async exportContent(): Promise<string> {
