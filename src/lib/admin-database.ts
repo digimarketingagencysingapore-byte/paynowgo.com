@@ -875,7 +875,7 @@ export const CMSDB = {
         .select("content")
         .eq("section", section)
         .eq("active", true)
-        .single();
+        .maybeSingle();
 
       if (error) {
         if (
@@ -890,7 +890,7 @@ export const CMSDB = {
         return null;
       }
 
-      return data.content;
+      return data?.content || null;
     } catch (error) {
       console.warn("CMS database error, using fallback:", error);
       return null;
@@ -899,7 +899,7 @@ export const CMSDB = {
 
   async getAllContent(): Promise<Record<string, any>> {
     const { data, error } = await supabase
-      .from("website_content")
+      .from("cms_content")
       .select("section, content")
       .eq("active", true);
 
@@ -911,9 +911,9 @@ export const CMSDB = {
         error.message?.includes("schema cache") ||
         error.message?.includes("Could not find")
       ) {
-        throw new SupabaseTableNotFoundError("website_content");
+        throw new SupabaseTableNotFoundError("cms_content");
       }
-      console.warn("Website content table error:", error);
+      console.warn("CMS content table error:", error);
       return {};
     }
 
@@ -932,32 +932,40 @@ export const CMSDB = {
     content: any,
     adminId?: string
   ): Promise<void> {
-    // Deactivate current version
-    await supabase
-      .from("website_content")
-      .update({ active: false })
-      .eq("section", section)
-      .eq("active", true);
-
-    // Insert new version  
-    const { error } = await supabase.from("website_content").insert({
-      section,
-      content,
-      created_by: adminId,
-      version: 1, // In production, increment version number
-    });
-
-    if (error) {
-      if (
-        error.code === "PGRST205" ||
-        error.code === "PGRST116" ||
-        error.message?.includes("table") ||
-        error.message?.includes("schema cache")
-      ) {
-        throw new SupabaseTableNotFoundError("website_content");
+    try {
+      console.log(`[CMSDB] Saving content for section: ${section}`);
+      
+      // Deactivate current version
+      const { error: deactivateError } = await supabase
+        .from("cms_content")
+        .update({ active: false })
+        .eq("section", section)
+        .eq("active", true);
+      
+      if (deactivateError) {
+        console.warn(`[CMSDB] Warning deactivating old content:`, deactivateError);
       }
-      console.error("Error saving CMS content:", error);
-      throw new Error("Failed to save CMS content");
+
+      // Insert new version
+      const { error: insertError } = await supabase
+        .from("cms_content")
+        .insert({
+          section,
+          content,
+          active: true,
+          version: 1,
+          created_by: adminId
+        });
+
+      if (insertError) {
+        console.error(`[CMSDB] Error inserting new content:`, insertError);
+        throw new Error(`Failed to save content: ${insertError.message}`);
+      }
+      
+      console.log(`[CMSDB] Content saved successfully for section: ${section}`);
+    } catch (error) {
+      console.error(`[CMSDB] Save content failed:`, error);
+      throw error;
     }
   },
 
@@ -965,10 +973,38 @@ export const CMSDB = {
     allContent: Record<string, any>,
     adminId?: string
   ): Promise<void> {
-    for (const [section, content] of Object.entries(allContent)) {
-      await this.saveContent(section, content, adminId);
+    console.log('[CMSDB] Saving all content sections...');
+    
+    try {
+      for (const [section, content] of Object.entries(allContent)) {
+        await this.saveContent(section, content, adminId);
+      }
+      console.log('[CMSDB] All content sections saved successfully');
+    } catch (error) {
+      console.error('[CMSDB] Save all content failed:', error);
+      throw error;
     }
-  },
+  }
+};
+
+// Legacy saveAllContent method - keeping for backward compatibility
+const legacySaveAllContent = CMSDB.saveAllContent;
+CMSDB.saveAllContent = async function(allContent: Record<string, any>, adminId?: string): Promise<void> {
+  try {
+    // Try new method first
+    await legacySaveAllContent.call(this, allContent, adminId);
+  } catch (error) {
+    if (
+      error instanceof Error && (
+        error.message?.includes("table") ||
+        error.message?.includes("schema cache") ||
+        error.message?.includes("PGRST116")
+      )
+    ) {
+      throw new SupabaseTableNotFoundError("cms_content");
+    }
+    throw error;
+  }
 };
 
 // SystemSettingsDB removed - not implemented in current schema
