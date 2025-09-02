@@ -9,8 +9,8 @@ interface AdminLoginFormProps {
 }
 
 export function AdminLoginForm({ onLoginSuccess }: AdminLoginFormProps) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("halitkaragoez@hotmail.com");
+  const [password, setPassword] = useState("password123");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
