@@ -38,9 +38,9 @@ function App() {
   // Fast loading optimization - set initial timeout
   React.useEffect(() => {
     const fastTimeout = setTimeout(() => {
-      console.log("[APP] Fast timeout - forcing loading state to false after 2 seconds");
+      console.log("[APP] Fast timeout - forcing loading state to false after 1 second");
       setIsLoading(false);
-    }, 2000);
+    }, 1000);
 
     return () => clearTimeout(fastTimeout);
   }, []);
@@ -105,46 +105,13 @@ function App() {
       console.log("[APP] User ID:", user.id);
       console.log("[APP] User Email:", user.email);
 
-      // Test Supabase connectivity first with timeout
-      console.log("[APP] Step 0: Testing Supabase connectivity...");
-      let supabaseWorking = false;
-      try {
-        const connectivityTimeout = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connectivity test timeout')), 1500)
-        );
-        
-        const connectivityTest = supabase.from('profiles').select('id').limit(1);
-        
-        await Promise.race([connectivityTest, connectivityTimeout]);
-        console.log("[APP] ✅ Supabase connectivity OK");
-        supabaseWorking = true;
-      } catch (connectError) {
-        console.error("[APP] ❌ Supabase connectivity failed:", connectError.message);
-        console.log("[APP] Will proceed with auth-only mode (no profile/merchant data)");
-        supabaseWorking = false;
-      }
-
-      // If Supabase is not working, use auth-only mode
-      if (!supabaseWorking) {
-        console.log("[APP] Setting up basic authenticated user (no database)");
-        setIsAuthenticated(true);
-        setUserType("merchant");
-        setCurrentUser({
-          id: user.id,
-          email: user.email!,
-        });
-        setIsLoading(false);
-        console.log("[APP] ===== AUTH COMPLETE (AUTH-ONLY MODE) =====");
-        return;
-      }
-
       // Get user profile to determine role
       console.log("[APP] Step 1: Loading user profile...");
       const profileStart = Date.now();
       
       // Add timeout to prevent hanging
       const profileTimeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Profile query timeout after 2 seconds')), 2000)
+        setTimeout(() => reject(new Error('Profile query timeout after 1 second')), 1000)
       );
       
       const profileQuery = supabase
@@ -208,7 +175,7 @@ function App() {
       
       // Add timeout to prevent hanging
       const merchantTimeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Merchant query timeout after 2 seconds')), 2000)
+        setTimeout(() => reject(new Error('Merchant query timeout after 1 second')), 1000)
       );
       
       const merchantQuery = supabase
