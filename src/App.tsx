@@ -213,7 +213,7 @@ function App() {
         .from("merchants")
         .select("*")
         .eq("profile_id", profile.id)
-        .single();
+        .maybeSingle();
       
       let merchant, merchantError;
       try {
