@@ -54,7 +54,8 @@ async function getCurrentMerchantId(): Promise<string> {
       .from('merchants')
       .select('id')
       .eq('profile_id', user.id)
-      .maybeSingle();
+      .limit(1)
+      .single();
       
     if (merchantError || !merchant) {
       console.warn('[MERCHANT_DB] No merchant found for user:', merchantError);

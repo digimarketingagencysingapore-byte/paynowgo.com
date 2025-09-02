@@ -66,7 +66,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         .from('merchants')
         .select('*')
         .eq('profile_id', user.id)
-        .maybeSingle();
+        .limit(1)
+        .single();
         
       if (merchantError || !merchant) {
         console.warn('[SETTINGS_CONTEXT] No merchant found for user:', merchantError);

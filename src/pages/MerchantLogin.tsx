@@ -67,7 +67,8 @@ export function MerchantLogin({ onLoginSuccess }: MerchantLoginProps) {
         .from('merchants')
         .select('*')
         .eq('profile_id', profile.id)
-        .maybeSingle();
+        .limit(1)
+        .single();
         
       if (merchantError || !merchant) {
         console.log('[MERCHANT_LOGIN] ❌ Merchant data not found:', merchantError);
