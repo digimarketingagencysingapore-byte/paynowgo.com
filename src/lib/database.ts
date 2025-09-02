@@ -219,7 +219,7 @@ async function getCurrentMerchantId(): Promise<string> {
       .select('id')
       .eq('profile_id', user.id)
       .limit(1)
-      .single();
+      .maybeSingle();
       
     if (merchantError || !merchant) {
       console.warn('[DATABASE] No merchant found for user profile:', merchantError);
