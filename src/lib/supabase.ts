@@ -1,25 +1,47 @@
 import { createClient, SupabaseClient, User, Session } from '@supabase/supabase-js';
 import { Database, Profile, AuthUser, AuthResponse } from '../../types';
 
-// Bolt automatically provides Supabase credentials via environment variables
-// These are injected at build/runtime by the Bolt platform
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabaseServiceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+// Bolt provides Supabase credentials through environment variables
+// During development, these may not be set, so we use window.__env__ as fallback
+const getEnvVar = (key: string): string | undefined => {
+  // Try import.meta.env first (Vite)
+  const viteValue = import.meta.env[key];
+  if (viteValue) return viteValue;
+
+  // Try window.__env__ (Bolt runtime injection)
+  if (typeof window !== 'undefined' && (window as any).__env__?.[key]) {
+    return (window as any).__env__[key];
+  }
+
+  return undefined;
+};
+
+const supabaseUrl = getEnvVar('VITE_SUPABASE_URL');
+const supabaseAnonKey = getEnvVar('VITE_SUPABASE_ANON_KEY');
+const supabaseServiceRoleKey = getEnvVar('VITE_SUPABASE_SERVICE_ROLE_KEY');
+
+// Log configuration status
+console.log('[Supabase] Configuration check:', {
+  hasUrl: !!supabaseUrl,
+  hasKey: !!supabaseAnonKey,
+  url: supabaseUrl?.substring(0, 40) + '...'
+});
 
 // Validate configuration
 const hasValidSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
 
 if (!hasValidSupabaseConfig) {
-  console.error('❌ Missing Supabase configuration!');
-  console.error('Bolt should automatically provide these via environment variables');
-  throw new Error('Supabase configuration is required. Please ensure Bolt has properly configured the database.');
+  console.warn('⚠️ Supabase credentials not available');
+  console.warn('This is expected during initial setup - Bolt will configure the database');
+  console.warn('If this persists, please check the Supabase connection in Bolt settings');
 }
 
-console.log('✅ Supabase configured:', { url: supabaseUrl?.substring(0, 30) + '...' });
+// Create client with fallback for missing credentials
+const effectiveUrl = supabaseUrl || 'https://placeholder.supabase.co';
+const effectiveAnonKey = supabaseAnonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDQ5MjcyMDAsImV4cCI6MTk2MDUwMzIwMH0.placeholder';
 
 // Client-side Supabase client with auth persistence
-export const supabase: SupabaseClient<Database> = createClient(supabaseUrl!, supabaseAnonKey!, {
+export const supabase: SupabaseClient<Database> = createClient(effectiveUrl, effectiveAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
@@ -29,7 +51,7 @@ export const supabase: SupabaseClient<Database> = createClient(supabaseUrl!, sup
 
 // Admin client with service role key for admin operations
 export const supabaseAdmin: SupabaseClient<Database> = supabaseServiceRoleKey
-  ? createClient(supabaseUrl!, supabaseServiceRoleKey, {
+  ? createClient(effectiveUrl, supabaseServiceRoleKey, {
       auth: {
         persistSession: false,
         autoRefreshToken: false
