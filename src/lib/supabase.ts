@@ -1,17 +1,14 @@
 import { createClient, SupabaseClient, User, Session } from '@supabase/supabase-js';
 import { Database, Profile, AuthUser, AuthResponse } from '../../types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDQ5MjcyMDAsImV4cCI6MTk2MDUwMzIwMH0.placeholder';
 const supabaseServiceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('Supabase environment variables missing:', {
-    url: supabaseUrl,
-    hasKey: !!supabaseAnonKey,
-    allEnv: import.meta.env
-  });
-  throw new Error('Missing Supabase environment variables. Please connect to Supabase first.');
+const hasValidSupabaseConfig = import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!hasValidSupabaseConfig) {
+  console.warn('⚠️ Supabase not configured - running in local mode');
 }
 
 // Client-side Supabase client with auth persistence
@@ -401,5 +398,11 @@ export async function setTenantContext(tenantId: string) {
 // Default tenant ID for demo
 export const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
-// Supabase schema is now fully enabled - no localStorage fallbacks
-export const isSupabaseSchemaEnabled = true;
+// Supabase schema is enabled only if valid config exists
+export const isSupabaseSchemaEnabled = hasValidSupabaseConfig;
+
+// Export config status for other modules
+export const supabaseConfigStatus = {
+  isConfigured: hasValidSupabaseConfig,
+  url: hasValidSupabaseConfig ? supabaseUrl : null
+};
