@@ -1,18 +1,25 @@
 import { createClient, SupabaseClient, User, Session } from '@supabase/supabase-js';
 import { Database, Profile, AuthUser, AuthResponse } from '../../types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDQ5MjcyMDAsImV4cCI6MTk2MDUwMzIwMH0.placeholder';
+// Bolt automatically provides Supabase credentials via environment variables
+// These are injected at build/runtime by the Bolt platform
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabaseServiceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
 
-const hasValidSupabaseConfig = import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Validate configuration
+const hasValidSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
 
 if (!hasValidSupabaseConfig) {
-  console.warn('⚠️ Supabase not configured - running in local mode');
+  console.error('❌ Missing Supabase configuration!');
+  console.error('Bolt should automatically provide these via environment variables');
+  throw new Error('Supabase configuration is required. Please ensure Bolt has properly configured the database.');
 }
 
+console.log('✅ Supabase configured:', { url: supabaseUrl?.substring(0, 30) + '...' });
+
 // Client-side Supabase client with auth persistence
-export const supabase: SupabaseClient<Database> = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase: SupabaseClient<Database> = createClient(supabaseUrl!, supabaseAnonKey!, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
@@ -22,7 +29,7 @@ export const supabase: SupabaseClient<Database> = createClient(supabaseUrl, supa
 
 // Admin client with service role key for admin operations
 export const supabaseAdmin: SupabaseClient<Database> = supabaseServiceRoleKey
-  ? createClient(supabaseUrl, supabaseServiceRoleKey, {
+  ? createClient(supabaseUrl!, supabaseServiceRoleKey, {
       auth: {
         persistSession: false,
         autoRefreshToken: false
