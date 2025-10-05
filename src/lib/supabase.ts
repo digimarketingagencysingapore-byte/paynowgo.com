@@ -3,7 +3,7 @@ import { Database, Profile, AuthUser, AuthResponse } from '../../types';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY!;
-const supabaseServiceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY!;
+const supabaseServiceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables. Please connect to Supabase first.');
@@ -19,12 +19,14 @@ export const supabase: SupabaseClient<Database> = createClient(supabaseUrl, supa
 });
 
 // Admin client with service role key for admin operations
-export const supabaseAdmin: SupabaseClient<Database> = createClient(supabaseUrl, supabaseServiceRoleKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false
-  }
-});
+export const supabaseAdmin: SupabaseClient<Database> = supabaseServiceRoleKey
+  ? createClient(supabaseUrl, supabaseServiceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      }
+    })
+  : supabase;
 
 // Auth Helper Functions
 export const authHelpers = {
